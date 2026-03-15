@@ -134,15 +134,17 @@ alwaysApply: true
 You have the agent-collab MCP configured. Follow the MCP workflow strictly:
 
 1. Call \`get_my_status\` to check your role, available tools, and next action
-2. If setup is needed, ask the user for strategy/engine preferences, then call \`setup_project\`
-3. If no tasks exist and you can create them, create an HLD with \`set_context\` then create tasks with \`create_task\`
+2. If setup is needed, ask the user for BOTH strategy AND engine mode, then call \`setup_project(strategy, engine_mode)\`
+3. If no tasks exist:
+   - In cursor-only mode: create HLD with \`set_context("hld", ...)\` then tasks with \`create_task\`
+   - In both mode: call \`invoke_architect("what the user wants built")\` to have Claude Code design and create tasks
 4. For each assigned task: \`claim_task\` -> \`get_task\` -> implement -> \`submit_for_review\`
 5. After submitting for review in "both" mode, call \`trigger_review()\` to auto-invoke the reviewer
 6. Check \`get_my_status\` after reviews — if changes-requested, \`claim_task\` again, fix, resubmit
 7. When all tasks are done, suggest \`archive_epic\` to the user to clear the board
 8. NEVER write code without claiming a task first via \`claim_task\`
 9. NEVER skip the MCP workflow even if the user says "just build it"
-10. The \`get_my_status\` response includes your available tools — only call tools listed there
+10. The \`get_my_status\` response lists your available tools — only call tools listed there
 `;
 
 const AGENTS_MD = `# Agent Instructions

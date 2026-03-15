@@ -28,7 +28,7 @@ function buildToolList(access: ReturnType<typeof getMyRoleConfig>["tools"], sing
   if (access.context_write) tools.push("set_context");
   if (access.save_plan) tools.push("save_plan");
   tools.push("get_task", "get_context", "get_review_feedback", "get_project_overview", "log_activity");
-  if (!single) tools.push("trigger_review", "notify_builder", "run_loop");
+  if (!single) tools.push("trigger_review", "notify_builder", "invoke_architect", "run_loop");
   tools.push("archive_epic", "list_epics", "get_epic", "get_codebase_context");
   tools.push("list_strategies", "get_active_strategy", "set_strategy", "set_engine_mode");
   return tools.join(", ");
@@ -46,20 +46,19 @@ export function registerStatusTools(server: McpServer): void {
             type: "text",
             text: [
               "SETUP_NEEDED: This project hasn't been configured for agent collaboration yet.\n",
-              "Ask the user which setup they'd like:\n",
-              "1. Strategy (default: architect-builder):",
-              "   - architect-builder — One designs, the other builds",
+              "You MUST ask the user TWO questions before calling setup_project:\n",
+              "1. Engine mode (REQUIRED — ask the user explicitly):",
+              "   - cursor-only: You handle everything alone (design + implement + review)",
+              "   - both: Cursor implements, Claude Code designs and reviews (recommended for quality)",
+              "   - claude-code-only: Claude Code handles everything alone\n",
+              "2. Strategy:",
+              "   - architect-builder — One agent designs, the other builds",
               "   - tdd-red-green — One writes tests, the other makes them pass",
               "   - writer-reviewer — One writes code, the other critiques",
               "   - parallel-specialist — Domain split, cross-review",
               "   - planner-executor — Detailed specs, mechanical execution",
               "   - sequential-pipeline — Multi-stage quality review\n",
-              "2. Engine mode (default: cursor-only):",
-              "   - cursor-only: You handle everything (design + implement + review)",
-              "   - both: Cursor implements, Claude Code reviews",
-              "   - claude-code-only: Claude Code handles everything\n",
-              "After getting their choices, call setup_project(strategy, engine_mode).",
-              "If they just say 'go with defaults' or similar, use architect-builder + cursor-only.\n",
+              "Then call setup_project(strategy, engine_mode) with BOTH values.\n",
               "Available tools before setup: get_my_status, setup_project, list_strategies, get_dashboard_info",
             ].join("\n"),
           }],
@@ -144,7 +143,7 @@ export function registerStatusTools(server: McpServer): void {
         if (single) {
           return text(header, `No tasks on the board.${historyHint} You have all tools — start by creating tasks with create_task(...).`);
         }
-        return text(header, `STOP: No tasks exist.${historyHint} Do NOT write code directly. The architect agent must create tasks first.`);
+        return text(header, `No tasks exist.${historyHint} Call invoke_architect("describe what the user wants built") to have Claude Code create the HLD and tasks. Pass the user's original request as the argument.`);
       }
 
       return text(header, "All tasks are done. Consider archiving this work with archive_epic(\"<name>\") to clear the board for the next feature. Or create new tasks if there are more requirements.");

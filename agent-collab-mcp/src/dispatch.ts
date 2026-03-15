@@ -134,6 +134,47 @@ export function dispatchBuilder(taskIds?: string[], message?: string): DispatchR
   return dispatchAgent("builder", prompt);
 }
 
+export function dispatchArchitect(userRequest: string): DispatchResult {
+  const mode = getEngineMode();
+
+  if (isSingleEngine()) {
+    return { dispatched: false, reason: "Single-engine mode — you are the architect. Create the HLD and tasks yourself." };
+  }
+
+  if (!cliExists("claude")) {
+    return { dispatched: false, reason: "claude CLI not found on PATH. Install Claude Code CLI or create tasks manually." };
+  }
+
+  const prompt = `Call get_my_status from the agent-collab MCP. You are the Architect. Create an HLD with set_context("hld", ...) and then break the work into tasks with create_task. Set notify_builder=true on the LAST create_task call. The user wants: ${userRequest}`;
+
+  const logDir = ensureLogDir();
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const logFile = path.join(logDir, `dispatch-architect-${ts}.log`);
+  const out = fs.openSync(logFile, "w");
+
+  const child = spawn("claude", ["-p", "--permission-mode", "auto", prompt], {
+    detached: true,
+    stdio: ["ignore", out, out],
+    cwd: process.cwd(),
+  });
+
+  child.unref();
+  const pid = child.pid ?? 0;
+
+  fs.writeSync(out, `--- Dispatched architect: claude -p ...\n--- PID: ${pid}\n--- Time: ${new Date().toISOString()}\n--- Request: ${userRequest}\n---\n`);
+
+  const db = getDb();
+  db.prepare(
+    "INSERT INTO activity_log (agent, action) VALUES (?, ?)"
+  ).run(getRole(), `Invoked architect for: ${userRequest.slice(0, 100)} (PID ${pid})`);
+
+  return {
+    dispatched: true,
+    pid,
+    logFile: path.relative(process.cwd(), logFile),
+  };
+}
+
 function formatResult(r: DispatchResult): string {
   if (r.dispatched) {
     return `Dispatched (PID: ${r.pid}, log: ${r.logFile})`;

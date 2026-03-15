@@ -32,7 +32,7 @@ if (process.argv.includes("--dashboard")) {
 
   const server = new McpServer({
     name: "agent-collab",
-    version: "1.3.0",
+    version: "1.3.1",
   }, { instructions });
 
   registerStatusTools(server);

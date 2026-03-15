@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { isInitialized, getDb, getRole, isSingleEngine } from "../db.js";
-import { dispatchReview, dispatchBuilder, formatResult } from "../dispatch.js";
+import { dispatchReview, dispatchBuilder, dispatchArchitect, formatResult } from "../dispatch.js";
 
 const NOT_SETUP = { content: [{ type: "text" as const, text: "Project not set up. Call setup_project first." }] };
 const SINGLE_MODE = { content: [{ type: "text" as const, text: "Dispatch tools are only available in 'both' engine mode. In single-engine mode, you handle both roles directly." }] };
@@ -75,6 +75,30 @@ export function registerDispatchTools(server: McpServer): void {
       text += formatResult(result);
       if (result.dispatched) {
         text += `\n\nThe builder is working in the background. Call get_my_status later to check progress.`;
+      }
+
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  server.tool(
+    "invoke_architect",
+    "Invoke Claude Code (Architect) to create an HLD and tasks for the user's request. Use this when no tasks exist in 'both' mode.",
+    {
+      request: z.string().describe("Description of what the user wants built. Pass the user's original request."),
+    },
+    async ({ request }) => {
+      if (!isInitialized()) return NOT_SETUP;
+      if (isSingleEngine()) {
+        return { content: [{ type: "text", text: "In single-engine mode, YOU are the architect. Create the HLD and tasks yourself with set_context and create_task." }] };
+      }
+
+      const result = dispatchArchitect(request);
+
+      let text = `Invoking Architect (Claude Code) to design and create tasks for: "${request.slice(0, 100)}${request.length > 100 ? "..." : ""}"\n`;
+      text += formatResult(result);
+      if (result.dispatched) {
+        text += `\n\nThe Architect is working in the background. It will create an HLD and tasks, then auto-notify you when done. Call get_my_status periodically to check for new tasks.`;
       }
 
       return { content: [{ type: "text", text }] };

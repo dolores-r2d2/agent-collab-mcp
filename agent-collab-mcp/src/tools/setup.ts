@@ -14,12 +14,12 @@ export function registerSetupTools(server: McpServer): void {
     "Initialize agent collaboration for this project. Creates the database, config files, hooks, and rules.",
     {
       strategy: z.string().optional().describe("Strategy ID (default: architect-builder). Call list_strategies to see options."),
-      engine_mode: z.enum(["both", "cursor-only", "claude-code-only"]).optional().describe("Engine mode (default: cursor-only)"),
+      engine_mode: z.enum(["both", "cursor-only", "claude-code-only"]).describe("REQUIRED. Engine mode: 'both' (Cursor builds, Claude Code reviews), 'cursor-only' (Cursor does everything), or 'claude-code-only'."),
       project_name: z.string().optional().describe("Project name (default: current directory name)"),
     },
     async ({ strategy, engine_mode, project_name }) => {
       const strategyId = strategy || getDefaultStrategyId();
-      const mode = engine_mode || "cursor-only";
+      const mode = engine_mode;
       const projName = project_name || path.basename(process.cwd());
 
       const def = getStrategyDef(strategyId);
