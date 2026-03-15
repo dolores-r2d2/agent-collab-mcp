@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { isInitialized, getDb, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig, isSingleEngine } from "../db.js";
+import { getDb, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig, isSingleEngine } from "../db.js";
+import { dispatchReview, formatResult } from "../dispatch.js";
 
 interface TaskRow {
   id: string;
@@ -30,7 +31,7 @@ function buildToolList(access: ReturnType<typeof getMyRoleConfig>["tools"], sing
   tools.push("get_task", "get_context", "get_review_feedback", "get_project_overview", "log_activity");
   if (!single) tools.push("trigger_review", "notify_builder", "invoke_architect", "run_loop");
   tools.push("archive_epic", "list_epics", "get_epic", "get_codebase_context");
-  tools.push("list_strategies", "get_active_strategy", "set_strategy", "set_engine_mode");
+  tools.push("list_strategies", "get_active_strategy", "set_strategy", "set_engine_mode", "setup_project");
   return tools.join(", ");
 }
 
@@ -40,31 +41,6 @@ export function registerStatusTools(server: McpServer): void {
     "Get your next action. Call this FIRST before any work.",
     {},
     async () => {
-      if (!isInitialized()) {
-        return {
-          content: [{
-            type: "text",
-            text: [
-              "SETUP_NEEDED: This project hasn't been configured for agent collaboration yet.\n",
-              "You MUST ask the user TWO questions before calling setup_project:\n",
-              "1. Engine mode (REQUIRED — ask the user explicitly):",
-              "   - cursor-only: You handle everything alone (design + implement + review)",
-              "   - both: Cursor implements, Claude Code designs and reviews (recommended for quality)",
-              "   - claude-code-only: Claude Code handles everything alone\n",
-              "2. Strategy:",
-              "   - architect-builder — One agent designs, the other builds",
-              "   - tdd-red-green — One writes tests, the other makes them pass",
-              "   - writer-reviewer — One writes code, the other critiques",
-              "   - parallel-specialist — Domain split, cross-review",
-              "   - planner-executor — Detailed specs, mechanical execution",
-              "   - sequential-pipeline — Multi-stage quality review\n",
-              "Then call setup_project(strategy, engine_mode) with BOTH values.\n",
-              "Available tools before setup: get_my_status, setup_project, list_strategies, get_dashboard_info",
-            ].join("\n"),
-          }],
-        };
-      }
-
       const db = getDb();
       const strategy = getActiveStrategy();
       const engineMode = getEngineMode();
@@ -116,15 +92,17 @@ export function registerStatusTools(server: McpServer): void {
           (single ? "Check engine mode configuration." : "The other agent needs to claim it."));
       }
 
-      const reviewCount = (db.prepare(
-        "SELECT COUNT(*) as cnt FROM tasks WHERE status = 'review'"
-      ).get() as { cnt: number }).cnt;
+      const reviewTasks = db.prepare(
+        "SELECT id FROM tasks WHERE status = 'review' ORDER BY id"
+      ).all() as TaskRow[];
 
-      if (reviewCount > 0 && !access.review_write) {
+      if (reviewTasks.length > 0 && !access.review_write) {
         if (single) {
-          return text(header, `${reviewCount} task(s) are in review. You have all tools — call review_task to review them.`);
+          return text(header, `${reviewTasks.length} task(s) are in review. You have all tools — call review_task to review them.`);
         }
-        return text(header, `WAIT: ${reviewCount} task(s) are pending review by the other agent. The reviewer was auto-invoked when you submitted. If it hasn't started, call trigger_review() to dispatch it manually.`);
+        const taskIds = reviewTasks.map(t => t.id);
+        const result = dispatchReview(taskIds);
+        return text(header, `${reviewTasks.length} task(s) pending review. Auto-dispatching batch reviewer: ${formatResult(result)}\nCall get_my_status again later to check progress.`);
       }
 
       const totalTasks = (db.prepare(
@@ -155,10 +133,6 @@ export function registerStatusTools(server: McpServer): void {
     "Get a high-level project status summary.",
     {},
     async () => {
-      if (!isInitialized()) {
-        return { content: [{ type: "text", text: "Project not initialized. Call setup_project first." }] };
-      }
-
       const db = getDb();
       const strategy = getActiveStrategy();
       const engineMode = getEngineMode();

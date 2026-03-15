@@ -110,6 +110,17 @@ function migrate(db: Database.Database): void {
   `);
 }
 
+export function autoSetup(): void {
+  const database = getDb();
+  const role = getRole();
+  const mode: EngineMode = role === "claude-code" ? "claude-code-only" : role === "cursor" ? "cursor-only" : "both";
+  setEngineMode(database, mode);
+  setActiveStrategy(database, getDefaultStrategyId());
+  database.prepare(
+    "INSERT INTO activity_log (agent, action) VALUES (?, ?)"
+  ).run(role, `Auto-setup: strategy=${getDefaultStrategyId()}, engine=${mode}`);
+}
+
 export function getRole(): string {
   return process.env.AGENT_ROLE || "unknown";
 }

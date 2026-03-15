@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { isInitialized, getDb, getRole, getToolAccess, getDefaultOwner, nextTaskId, isSingleEngine } from "../db.js";
-import { dispatchReview, dispatchBuilder, formatResult } from "../dispatch.js";
+import { dispatchBuilder, formatResult } from "../dispatch.js";
 
 const NOT_SETUP = { content: [{ type: "text" as const, text: "Project not set up. Call setup_project first." }] };
 const NO_ACCESS = (tool: string) => ({ content: [{ type: "text" as const, text: `${tool} is not available for your current role. Call get_my_status to see your available tools.` }] });
@@ -234,8 +234,7 @@ export function registerTaskTools(server: McpServer): void {
       let text = `${task_id} submitted for review.`;
 
       if (!isSingleEngine()) {
-        const result = dispatchReview([task_id]);
-        text += ` Reviewer: ${formatResult(result)}`;
+        text += ` Submit more tasks or call trigger_review() when ready for batch review.`;
       }
 
       text += ` Call get_my_status to see your next action.`;
