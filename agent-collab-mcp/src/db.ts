@@ -47,6 +47,7 @@ function migrate(db: Database.Database): void {
       context TEXT,
       acceptance TEXT,
       plan TEXT,
+      summary TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );

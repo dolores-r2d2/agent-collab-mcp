@@ -81,7 +81,10 @@ function apiTaskDetail(db: Database.Database, taskId: string) {
   const reviews = db.prepare(
     "SELECT round, verdict, issues, notes, created_at FROM reviews WHERE task_id = ? ORDER BY round"
   ).all(taskId);
-  return { ...(task as object), reviews };
+  const history = db.prepare(
+    "SELECT timestamp, agent, action FROM activity_log WHERE action LIKE ? ORDER BY id"
+  ).all(`%${taskId}%`);
+  return { ...(task as object), reviews, history };
 }
 
 function apiStrategies() {
@@ -422,6 +425,27 @@ main{display:flex;flex-direction:column;gap:1.2rem;padding:1.5rem 2rem;max-width
 .review-issue{font-size:.75rem;color:var(--fg-1);padding:.2rem 0;font-family:var(--font-mono)}
 .review-issue .issue-loc{color:var(--accent)}
 
+/* ── Task Timeline ──────────────────────────────────────── */
+.timeline{display:flex;flex-direction:column;gap:0;position:relative;padding-left:1.2rem}
+.timeline::before{content:'';position:absolute;left:.4rem;top:.5rem;bottom:.5rem;width:2px;background:var(--bg-3)}
+.tl-entry{position:relative;padding:.5rem 0 .5rem .8rem}
+.tl-entry::before{content:'';position:absolute;left:-.85rem;top:.75rem;width:10px;height:10px;border-radius:50%;border:2px solid var(--bg-3);background:var(--bg-1);z-index:1}
+.tl-entry.tl-submit::before{background:var(--yellow);border-color:var(--yellow)}
+.tl-entry.tl-approved::before{background:var(--green);border-color:var(--green)}
+.tl-entry.tl-changes::before{background:var(--red);border-color:var(--red)}
+.tl-entry.tl-claim::before{background:var(--blue);border-color:var(--blue)}
+.tl-entry.tl-other::before{background:var(--fg-2);border-color:var(--fg-2)}
+.tl-time{font-size:.6rem;font-family:var(--font-mono);color:var(--fg-2)}
+.tl-agent{font-size:.6rem;font-family:var(--font-mono);padding:.1rem .3rem;border-radius:4px;margin-left:.3rem}
+.tl-agent.cursor{background:var(--accent-glow);color:var(--accent)}
+.tl-agent.claude-code{background:var(--cyan-bg);color:var(--cyan)}
+.tl-body{font-size:.78rem;color:var(--fg-1);margin-top:.2rem;line-height:1.4}
+.tl-summary{background:var(--bg-2);padding:.4rem .6rem;border-radius:var(--radius-sm);margin-top:.3rem;
+  font-size:.75rem;color:var(--fg-1);border-left:3px solid var(--yellow)}
+.tl-review-block{background:var(--bg-2);padding:.4rem .6rem;border-radius:var(--radius-sm);margin-top:.3rem;
+  font-size:.75rem;border-left:3px solid var(--green)}
+.tl-review-block.changes{border-left-color:var(--red)}
+
 /* ── Context Docs ───────────────────────────────────────── */
 .ctx-doc{background:var(--bg-2);border:1px solid var(--bg-3);border-radius:var(--radius-sm);
   padding:.6rem .8rem;margin-bottom:.5rem}
@@ -592,26 +616,61 @@ async function openTask(id) {
   const data = await fetchJSON('/api/task?id='+encodeURIComponent(id));
   if (!data) return;
 
-  const reviews = (data.reviews || []).map(r => {
-    let issues = '';
-    if (r.issues) {
-      try {
-        const parsed = JSON.parse(r.issues);
-        issues = parsed.map(i =>
-          '<div class="review-issue"><span class="issue-loc">['+(i.file||'general')+(i.line?':'+i.line:'')+']</span> '+escHtml(i.description)+'</div>'
-        ).join('');
-      } catch(e) { issues = '<div class="review-issue">'+escHtml(r.issues)+'</div>'; }
+  var timeline = '';
+  var history = data.history || [];
+  var reviews = data.reviews || [];
+  var reviewIdx = 0;
+
+  if (history.length > 0 || reviews.length > 0) {
+    var entries = [];
+    for (var h = 0; h < history.length; h++) {
+      var a = history[h];
+      var ts = a.timestamp ? a.timestamp.replace('T',' ').slice(0,16) : '';
+      var agentCls = a.agent === 'cursor' ? 'cursor' : a.agent === 'claude-code' ? 'claude-code' : '';
+      var action = a.action || '';
+      var cls = 'tl-other';
+      var body = escHtml(action);
+
+      if (action.indexOf('Claimed') >= 0) {
+        cls = 'tl-claim';
+      } else if (action.indexOf('Submitted') >= 0) {
+        cls = 'tl-submit';
+        var sumMatch = action.indexOf(': ');
+        if (sumMatch > 0) {
+          var sumText = action.slice(sumMatch + 2);
+          body = 'Submitted for review';
+          body += '<div class="tl-summary">'+escHtml(sumText)+'</div>';
+        }
+      } else if (action.indexOf('Reviewed') >= 0) {
+        var isApproved = action.indexOf('approved') >= 0;
+        cls = isApproved ? 'tl-approved' : 'tl-changes';
+        if (reviewIdx < reviews.length) {
+          var rv = reviews[reviewIdx];
+          reviewIdx++;
+          var issuesHtml = '';
+          if (rv.issues) {
+            try {
+              var parsed = JSON.parse(rv.issues);
+              issuesHtml = parsed.map(function(i) {
+                return '<div class="review-issue"><span class="issue-loc">['+(i.file||'general')+(i.line?':'+i.line:'')+']</span> '+escHtml(i.description)+'</div>';
+              }).join('');
+            } catch(e) { issuesHtml = escHtml(rv.issues); }
+          }
+          body = '<span class="verdict-badge '+(rv.verdict||'')+'">'+escHtml(rv.verdict||'')+'</span> Round '+(rv.round||'');
+          body += '<div class="tl-review-block '+(rv.verdict==='changes-requested'?'changes':'')+'">'+
+            issuesHtml+
+            (rv.notes ? '<div style="margin-top:.3rem;color:var(--fg-1)">'+escHtml(rv.notes)+'</div>' : '')+
+          '</div>';
+        }
+      }
+
+      entries.push('<div class="tl-entry '+cls+'">'+
+        '<div><span class="tl-time">'+escHtml(ts)+'</span><span class="tl-agent '+agentCls+'">'+escHtml(a.agent)+'</span></div>'+
+        '<div class="tl-body">'+body+'</div>'+
+      '</div>');
     }
-    return '<div class="review-entry">'+
-      '<div class="review-header">'+
-        '<span class="round-badge">Round '+r.round+'</span>'+
-        '<span class="verdict-badge '+r.verdict+'">'+escHtml(r.verdict)+'</span>'+
-        '<span style="font-size:.65rem;color:var(--fg-2)">'+escHtml(r.created_at)+'</span>'+
-      '</div>'+
-      issues+
-      (r.notes ? '<div class="review-notes">'+escHtml(r.notes)+'</div>' : '')+
-    '</div>';
-  }).join('');
+    timeline = '<div class="modal-section"><h4>Timeline</h4><div class="timeline">'+entries.join('')+'</div></div>';
+  }
 
   document.getElementById('modal').innerHTML =
     '<div class="modal-header">'+
@@ -623,10 +682,11 @@ async function openTask(id) {
     '<div style="font-size:.75rem;color:var(--fg-2);margin-bottom:1rem">Owner: '+escHtml(data.owner)+
       (data.depends_on?' &bull; Depends: '+escHtml(data.depends_on):'')+
       ' &bull; Created: '+escHtml(data.created_at)+'</div>'+
+    (data.summary ? '<div class="modal-section"><h4>Implementation Summary</h4><pre>'+escHtml(data.summary)+'</pre></div>' : '')+
     (data.context ? '<div class="modal-section"><h4>Context</h4><pre>'+escHtml(data.context)+'</pre></div>' : '')+
     (data.acceptance ? '<div class="modal-section"><h4>Acceptance Criteria</h4><pre>'+escHtml(data.acceptance)+'</pre></div>' : '')+
     (data.plan ? '<div class="modal-section"><h4>Plan</h4><pre>'+escHtml(data.plan)+'</pre></div>' : '')+
-    (reviews ? '<div class="modal-section"><h4>Reviews</h4>'+reviews+'</div>' : '');
+    timeline;
 
   document.getElementById('modal-overlay').classList.add('open');
 }

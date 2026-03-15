@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { spawn } from "child_process";
+import path from "path";
+import fs from "fs";
 import { registerStatusTools } from "./tools/status.js";
 import { registerTaskTools } from "./tools/tasks.js";
 import { registerReviewTools } from "./tools/reviews.js";
@@ -28,7 +31,7 @@ if (process.argv.includes("--dashboard")) {
 
   const server = new McpServer({
     name: "agent-collab",
-    version: "1.4.0",
+    version: "1.4.1",
   }, { instructions });
 
   registerStatusTools(server);
@@ -45,4 +48,24 @@ if (process.argv.includes("--dashboard")) {
 
   const role = getRole();
   process.stderr.write(`agent-collab MCP started | strategy: ${strategy.name} | engine: ${engineMode} | role: ${roleConfig.name} (${role})\n`);
+
+  const dashboardScript = path.resolve(path.dirname(new URL(import.meta.url).pathname), "dashboard.js");
+  if (fs.existsSync(dashboardScript)) {
+    try {
+      const logDir = path.join(process.cwd(), "scripts", "logs");
+      fs.mkdirSync(logDir, { recursive: true });
+      const logFile = path.join(logDir, "dashboard.log");
+      const out = fs.openSync(logFile, "a");
+      const child = spawn("node", [dashboardScript], {
+        detached: true,
+        stdio: ["ignore", out, out],
+        cwd: process.cwd(),
+        env: { ...process.env },
+      });
+      child.unref();
+      process.stderr.write(`Dashboard auto-started | http://localhost:4800 | PID: ${child.pid}\n`);
+    } catch {
+      process.stderr.write(`Dashboard auto-start failed (non-fatal)\n`);
+    }
+  }
 }

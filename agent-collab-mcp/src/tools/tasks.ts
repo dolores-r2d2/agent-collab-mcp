@@ -224,8 +224,8 @@ export function registerTaskTools(server: McpServer): void {
       }
 
       db.prepare(
-        "UPDATE tasks SET status = 'review', updated_at = datetime('now') WHERE id = ?"
-      ).run(task_id);
+        "UPDATE tasks SET status = 'review', summary = ?, updated_at = datetime('now') WHERE id = ?"
+      ).run(summary, task_id);
 
       db.prepare(
         "INSERT INTO activity_log (agent, action) VALUES (?, ?)"
