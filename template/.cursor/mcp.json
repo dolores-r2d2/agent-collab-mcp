@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "agent-collab": {
+      "command": "node",
+      "args": ["./agent-collab-mcp/build/index.js"],
+      "env": {
+        "AGENT_ROLE": "cursor"
+      }
+    }
+  }
+}

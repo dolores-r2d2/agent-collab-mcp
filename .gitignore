@@ -1,0 +1,20 @@
+node_modules/
+build/
+.agent-collab/
+scripts/logs/
+*.db
+.DS_Store
+
+# Local project files (not part of the skeleton)
+shufersal-manager/
+miluim-mcp/
+red-alerts-map.html
+scripts/.status
+.shared-memory/
+.claude/
+.cursor/mcp.json
+.cursor/hooks.json
+.cursor/hooks/
+.cursor/projects/
+.cursor/rules/shared-memory.mdc
+agent-transcripts/

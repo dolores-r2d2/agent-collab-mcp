@@ -1,0 +1,46 @@
+{
+  "name": "agent-collab-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for multi-agent coordination between Cursor and Claude Code. Strategies, task management, review loops, and a live dashboard.",
+  "type": "module",
+  "main": "build/index.js",
+  "bin": {
+    "agent-collab-mcp": "./build/index.js"
+  },
+  "files": [
+    "build",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js",
+    "dev": "tsx src/index.ts",
+    "dashboard": "node build/dashboard.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "cursor",
+    "claude-code",
+    "agent-collaboration",
+    "multi-agent",
+    "task-management",
+    "code-review"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dolores-r2d2/agent-collab-mcp"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "better-sqlite3": "^11.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}
