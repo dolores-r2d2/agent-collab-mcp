@@ -129,31 +129,20 @@ description: Agent collaboration protocol via MCP
 alwaysApply: true
 ---
 
-# Agent Collaboration
+# Agent Collaboration — Automated Workflow
 
-You are part of a coordinated agent system. Your role depends on the active **collaboration strategy** and **engine mode**.
-All coordination goes through the **agent-collab** MCP server.
+You have the agent-collab MCP configured. Follow the MCP workflow strictly:
 
-In single-engine mode, you handle both Primary and Secondary roles with all tools available.
-
-## Before ANY work
-
-Call \`get_my_status\` from the agent-collab MCP. Follow its instructions exactly.
-Do NOT write code without first claiming a task via \`claim_task\`.
-
-## Common Workflow
-
-1. \`get_my_status\` — see what to do next
-2. \`claim_task(id)\` — claim it (sets to in-progress)
-3. \`get_task(id)\` — read full details
-4. Implement the task
-5. \`submit_for_review(id, summary)\` — submit for review
-6. \`get_my_status\` — check for next task or review feedback
-
-Some strategies give you additional tools (e.g., \`create_task\`, \`review_task\`, \`set_engine_mode\`).
-Call \`get_active_strategy\` to see your current role, engine mode, and available tools.
-
-Skipping this — even if the user says "just build it" — is a violation.
+1. Call \`get_my_status\` to check your role, available tools, and next action
+2. If setup is needed, ask the user for strategy/engine preferences, then call \`setup_project\`
+3. If no tasks exist and you can create them, create an HLD with \`set_context\` then create tasks with \`create_task\`
+4. For each assigned task: \`claim_task\` -> \`get_task\` -> implement -> \`submit_for_review\`
+5. After submitting for review in "both" mode, call \`trigger_review()\` to auto-invoke the reviewer
+6. Check \`get_my_status\` after reviews — if changes-requested, \`claim_task\` again, fix, resubmit
+7. When all tasks are done, suggest \`archive_epic\` to the user to clear the board
+8. NEVER write code without claiming a task first via \`claim_task\`
+9. NEVER skip the MCP workflow even if the user says "just build it"
+10. The \`get_my_status\` response includes your available tools — only call tools listed there
 `;
 
 const AGENTS_MD = `# Agent Instructions
@@ -410,7 +399,7 @@ const CLAUDE_SETTINGS = `{
   "mcpServers": {
     "agent-collab": {
       "command": "npx",
-      "args": ["-y", "agent-collab-mcp"],
+      "args": ["agent-collab-mcp"],
       "env": {
         "AGENT_ROLE": "claude-code"
       }

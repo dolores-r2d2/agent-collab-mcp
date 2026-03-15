@@ -110,6 +110,10 @@ function apiEpicDetail(db: Database.Database, epicId: string) {
   return { ...(epic as object), tasks };
 }
 
+function apiContextDocs(db: Database.Database) {
+  return db.prepare("SELECT key, content, updated_at FROM context_docs ORDER BY key").all();
+}
+
 function getProjectName(db: Database.Database): string {
   const row = db.prepare("SELECT value FROM config WHERE key = 'project_name'").get() as { value: string } | undefined;
   return row?.value ?? path.basename(process.cwd());
@@ -167,6 +171,9 @@ const server = http.createServer((req, res) => {
         }
         case "/api/project-name":
           data = { name: getProjectName(db) };
+          break;
+        case "/api/context":
+          data = apiContextDocs(db);
           break;
         default:
           res.writeHead(404);
@@ -415,6 +422,18 @@ main{display:flex;flex-direction:column;gap:1.2rem;padding:1.5rem 2rem;max-width
 .review-issue{font-size:.75rem;color:var(--fg-1);padding:.2rem 0;font-family:var(--font-mono)}
 .review-issue .issue-loc{color:var(--accent)}
 
+/* ── Context Docs ───────────────────────────────────────── */
+.ctx-doc{background:var(--bg-2);border:1px solid var(--bg-3);border-radius:var(--radius-sm);
+  padding:.6rem .8rem;margin-bottom:.5rem}
+.ctx-doc .ctx-key{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--accent);margin-bottom:.3rem;cursor:pointer;display:flex;align-items:center;gap:.3rem}
+.ctx-doc .ctx-key::before{content:'\\25B6';font-size:.5rem;transition:transform .2s}
+.ctx-doc.open .ctx-key::before{transform:rotate(90deg)}
+.ctx-doc .ctx-body{font-size:.75rem;color:var(--fg-1);line-height:1.5;display:none;
+  white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto;margin-top:.3rem}
+.ctx-doc.open .ctx-body{display:block}
+.ctx-doc .ctx-updated{font-size:.55rem;color:var(--fg-2);font-family:var(--font-mono)}
+
 /* ── Epics ──────────────────────────────────────────────── */
 .epic-item{
   background:var(--bg-2);border:1px solid var(--bg-3);border-radius:var(--radius-sm);
@@ -452,6 +471,10 @@ main{display:flex;flex-direction:column;gap:1.2rem;padding:1.5rem 2rem;max-width
       <div class="panel" id="strategy-panel">
         <h3><span class="icon">&#9881;</span> Strategy</h3>
         <div id="strategy-content"></div>
+      </div>
+      <div class="panel" id="context-panel">
+        <h3><span class="icon">&#128196;</span> Context Docs</h3>
+        <div id="context-docs"></div>
       </div>
       <div class="panel" id="epics-panel">
         <h3><span class="icon">&#128230;</span> Archived Epics</h3>
@@ -617,6 +640,20 @@ document.getElementById('modal-overlay').addEventListener('click', function(e) {
 });
 document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeModal(); });
 
+function renderContextDocs(docs) {
+  const el = document.getElementById('context-docs');
+  if (!docs || docs.length === 0) {
+    el.innerHTML = '<div class="empty-state">No context docs yet</div>';
+    return;
+  }
+  el.innerHTML = docs.map(d =>
+    '<div class="ctx-doc" onclick="this.classList.toggle(\\'open\\')">'+
+      '<div class="ctx-key">'+escHtml(d.key).toUpperCase()+' <span class="ctx-updated">'+escHtml(d.updated_at||'')+'</span></div>'+
+      '<div class="ctx-body">'+escHtml(d.content)+'</div>'+
+    '</div>'
+  ).join('');
+}
+
 function renderEpics(epics) {
   const el = document.getElementById('epics-list');
   if (!epics || epics.length === 0) {
@@ -670,16 +707,18 @@ async function openEpic(id) {
 
 async function refresh() {
   try {
-    const [overview, tasks, activity, epics, proj] = await Promise.all([
+    const [overview, tasks, activity, epics, proj, ctxDocs] = await Promise.all([
       fetchJSON('/api/overview'),
       fetchJSON('/api/tasks'),
       fetchJSON('/api/activity?limit=30'),
       fetchJSON('/api/epics'),
       fetchJSON('/api/project-name'),
+      fetchJSON('/api/context'),
     ]);
     renderStats(overview);
     renderKanban(tasks);
     renderStrategy(overview);
+    renderContextDocs(ctxDocs);
     renderActivity(activity);
     renderEpics(epics);
     if (proj && proj.name) document.getElementById('h-project').textContent = proj.name;

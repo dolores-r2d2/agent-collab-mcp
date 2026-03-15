@@ -19,6 +19,21 @@ interface ActivityRow {
   action: string;
 }
 
+function buildToolList(access: ReturnType<typeof getMyRoleConfig>["tools"], single: boolean): string {
+  const tools: string[] = [];
+  if (access.task_create) tools.push("create_task");
+  if (access.task_claim) tools.push("claim_task");
+  if (access.task_submit) tools.push("submit_for_review");
+  if (access.review_write) tools.push("review_task");
+  if (access.context_write) tools.push("set_context");
+  if (access.save_plan) tools.push("save_plan");
+  tools.push("get_task", "get_context", "get_review_feedback", "get_project_overview", "log_activity");
+  if (!single) tools.push("trigger_review", "notify_builder", "run_loop");
+  tools.push("archive_epic", "list_epics", "get_epic", "get_codebase_context");
+  tools.push("list_strategies", "get_active_strategy", "set_strategy", "set_engine_mode");
+  return tools.join(", ");
+}
+
 export function registerStatusTools(server: McpServer): void {
   server.tool(
     "get_my_status",
@@ -44,7 +59,8 @@ export function registerStatusTools(server: McpServer): void {
               "   - both: Cursor implements, Claude Code reviews",
               "   - claude-code-only: Claude Code handles everything\n",
               "After getting their choices, call setup_project(strategy, engine_mode).",
-              "If they just say 'go with defaults' or similar, use architect-builder + cursor-only.",
+              "If they just say 'go with defaults' or similar, use architect-builder + cursor-only.\n",
+              "Available tools before setup: get_my_status, setup_project, list_strategies, get_dashboard_info",
             ].join("\n"),
           }],
         };
@@ -57,7 +73,8 @@ export function registerStatusTools(server: McpServer): void {
       const single = isSingleEngine();
       const access = roleConfig.tools;
 
-      const header = `[Strategy: ${strategy.name}] [Engine: ${engineMode}] [Role: ${roleConfig.name}]\n`;
+      const toolLine = `Your tools: ${buildToolList(access, single)}\n`;
+      const header = `[Strategy: ${strategy.name}] [Engine: ${engineMode}] [Role: ${roleConfig.name}]\n${toolLine}`;
 
       const inProgress = db.prepare(
         "SELECT id, title FROM tasks WHERE status = 'in-progress' LIMIT 1"
@@ -156,8 +173,10 @@ export function registerStatusTools(server: McpServer): void {
         "SELECT timestamp, agent, action FROM activity_log ORDER BY id DESC LIMIT 5"
       ).all() as ActivityRow[];
 
+      const epicCount = (db.prepare("SELECT COUNT(*) as cnt FROM epics").get() as { cnt: number }).cnt;
+
       let out = `Strategy: ${strategy.name} | Engine mode: ${engineMode}\n`;
-      out += `Project: ${total} tasks total\n`;
+      out += `Project: ${total} tasks total | ${epicCount} archived epic(s)\n`;
       for (const r of counts) {
         out += `  ${r.status}: ${r.cnt}\n`;
       }

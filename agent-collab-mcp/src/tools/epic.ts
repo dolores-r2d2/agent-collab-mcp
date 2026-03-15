@@ -1,6 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getDb, getRole, getActiveStrategy, getEngineMode, nextEpicId } from "../db.js";
+import { isInitialized, getDb, getRole, getActiveStrategy, getEngineMode, nextEpicId } from "../db.js";
+
+const NOT_SETUP = { content: [{ type: "text" as const, text: "Project not set up. Call setup_project first." }] };
 
 interface TaskRow {
   id: string;
@@ -74,6 +76,7 @@ export function registerEpicTools(server: McpServer): void {
       confirm: z.boolean().optional().describe("Set to true to confirm the archive"),
     },
     async ({ name, description, include_incomplete, confirm }) => {
+      if (!isInitialized()) return NOT_SETUP;
       const db = getDb();
 
       const tasks = db.prepare("SELECT * FROM tasks ORDER BY CAST(SUBSTR(id, 3) AS INTEGER)").all() as TaskRow[];
@@ -178,6 +181,7 @@ export function registerEpicTools(server: McpServer): void {
     "List all archived epics with summaries. Shows project history.",
     {},
     async () => {
+      if (!isInitialized()) return NOT_SETUP;
       const db = getDb();
       const epics = db.prepare(
         "SELECT id, name, description, task_count, strategy, engine_mode, archived_at FROM epics ORDER BY CAST(SUBSTR(id, 3) AS INTEGER)"
@@ -203,6 +207,7 @@ export function registerEpicTools(server: McpServer): void {
     "Get full details of an archived epic: tasks, reviews, context, activity.",
     { epic_id: z.string().describe("Epic ID, e.g. E-001") },
     async ({ epic_id }) => {
+      if (!isInitialized()) return NOT_SETUP;
       const db = getDb();
       const epic = db.prepare("SELECT * FROM epics WHERE id = ?").get(epic_id) as EpicRow | undefined;
 
@@ -242,6 +247,7 @@ export function registerEpicTools(server: McpServer): void {
     "Get current HLD/PRD plus summaries of all past epics. Call this before starting new work to understand the codebase history.",
     {},
     async () => {
+      if (!isInitialized()) return NOT_SETUP;
       const db = getDb();
 
       const contextDocs = db.prepare("SELECT key, content, updated_at FROM context_docs").all() as ContextRow[];

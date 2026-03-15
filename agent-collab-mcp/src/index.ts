@@ -21,7 +21,7 @@ if (process.argv.includes("--dashboard")) {
     instructions = [
       "This project hasn't been set up for agent collaboration yet.",
       "Call get_my_status to see setup instructions, or call setup_project directly.",
-      "Available tools: get_my_status, setup_project, list_strategies, get_dashboard_info.",
+      "All tools are visible but most require setup first.",
     ].join(" ");
   } else {
     const strategy = getActiveStrategy();
@@ -32,38 +32,17 @@ if (process.argv.includes("--dashboard")) {
 
   const server = new McpServer({
     name: "agent-collab",
-    version: "1.2.0",
+    version: "1.3.0",
   }, { instructions });
 
   registerStatusTools(server);
   registerSetupTools(server);
-
-  if (initialized) {
-    registerTaskTools(server);
-    registerReviewTools(server);
-    registerContextTools(server);
-    registerStrategyTools(server);
-    registerDispatchTools(server);
-    registerEpicTools(server);
-  } else {
-    const { getAllStrategies } = await import("./strategies.js");
-    server.tool(
-      "list_strategies",
-      "List all available collaboration strategies.",
-      {},
-      async () => {
-        const strategies = getAllStrategies();
-        let text = "Available strategies:\n\n";
-        for (const s of strategies) {
-          text += `## ${s.name} (${s.id})\n`;
-          text += `${s.description}\n`;
-          text += `Best for: ${s.best_for}\n`;
-          text += `Roles: ${s.roles.primary.name} (Primary) + ${s.roles.secondary.name} (Secondary)\n\n`;
-        }
-        return { content: [{ type: "text", text }] };
-      }
-    );
-  }
+  registerTaskTools(server);
+  registerReviewTools(server);
+  registerContextTools(server);
+  registerStrategyTools(server);
+  registerDispatchTools(server);
+  registerEpicTools(server);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -75,6 +54,6 @@ if (process.argv.includes("--dashboard")) {
     const roleConfig = getMyRoleConfig();
     process.stderr.write(`agent-collab MCP started | strategy: ${strategy.name} | engine: ${engineMode} | role: ${roleConfig.name} (${role})\n`);
   } else {
-    process.stderr.write(`agent-collab MCP started | NOT INITIALIZED | awaiting setup_project\n`);
+    process.stderr.write(`agent-collab MCP started | NOT INITIALIZED | all tools visible, awaiting setup_project\n`);
   }
 }

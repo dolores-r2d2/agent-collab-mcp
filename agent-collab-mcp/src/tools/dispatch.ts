@@ -1,7 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getDb, getRole, isSingleEngine } from "../db.js";
+import { isInitialized, getDb, getRole, isSingleEngine } from "../db.js";
 import { dispatchReview, dispatchBuilder, formatResult } from "../dispatch.js";
+
+const NOT_SETUP = { content: [{ type: "text" as const, text: "Project not set up. Call setup_project first." }] };
+const SINGLE_MODE = { content: [{ type: "text" as const, text: "Dispatch tools are only available in 'both' engine mode. In single-engine mode, you handle both roles directly." }] };
 
 interface TaskRow {
   id: string;
@@ -10,10 +13,6 @@ interface TaskRow {
 }
 
 export function registerDispatchTools(server: McpServer): void {
-  if (isSingleEngine()) return;
-
-  const role = getRole();
-
   server.tool(
     "trigger_review",
     "Invoke the reviewer agent to review tasks. Auto-spawns the counterpart CLI in the background.",
@@ -21,6 +20,8 @@ export function registerDispatchTools(server: McpServer): void {
       task_id: z.string().optional().describe("Specific task ID to review, or omit to review all tasks in 'review' status"),
     },
     async ({ task_id }) => {
+      if (!isInitialized()) return NOT_SETUP;
+      if (isSingleEngine()) return SINGLE_MODE;
       const db = getDb();
 
       let taskIds: string[];
@@ -58,6 +59,8 @@ export function registerDispatchTools(server: McpServer): void {
       message: z.string().optional().describe("Optional context message for the builder"),
     },
     async ({ message }) => {
+      if (!isInitialized()) return NOT_SETUP;
+      if (isSingleEngine()) return SINGLE_MODE;
       const db = getDb();
       const assigned = db.prepare("SELECT id FROM tasks WHERE status = 'assigned' ORDER BY id").all() as TaskRow[];
 
@@ -87,6 +90,8 @@ export function registerDispatchTools(server: McpServer): void {
       timeout_seconds: z.number().optional().describe("Timeout per agent invocation in seconds (default: 300)"),
     },
     async ({ max_rounds, max_tasks, timeout_seconds }) => {
+      if (!isInitialized()) return NOT_SETUP;
+      if (isSingleEngine()) return SINGLE_MODE;
       const maxR = max_rounds ?? 3;
       const maxT = max_tasks ?? 999;
       const timeout = (timeout_seconds ?? 300) * 1000;
