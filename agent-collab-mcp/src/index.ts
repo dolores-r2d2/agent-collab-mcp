@@ -7,6 +7,8 @@ import { registerReviewTools } from "./tools/reviews.js";
 import { registerContextTools } from "./tools/context.js";
 import { registerStrategyTools } from "./tools/strategy.js";
 import { registerSetupTools } from "./tools/setup.js";
+import { registerDispatchTools } from "./tools/dispatch.js";
+import { registerEpicTools } from "./tools/epic.js";
 import { isInitialized, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig } from "./db.js";
 
 if (process.argv.includes("--dashboard")) {
@@ -30,7 +32,7 @@ if (process.argv.includes("--dashboard")) {
 
   const server = new McpServer({
     name: "agent-collab",
-    version: "1.0.0",
+    version: "1.2.0",
   }, { instructions });
 
   registerStatusTools(server);
@@ -41,6 +43,8 @@ if (process.argv.includes("--dashboard")) {
     registerReviewTools(server);
     registerContextTools(server);
     registerStrategyTools(server);
+    registerDispatchTools(server);
+    registerEpicTools(server);
   } else {
     const { getAllStrategies } = await import("./strategies.js");
     server.tool(

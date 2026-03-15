@@ -270,7 +270,7 @@ if [[ ! -f ".agent-collab/collab.db" ]]; then
   exit 1
 fi
 
-exec npx -y agent-collab-mcp -- --dashboard "\${ARGS[@]}"
+exec npx -y agent-collab-mcp -- --dashboard \${ARGS[@]+"\${ARGS[@]}"}
 `;
 
 const ORCHESTRATE_SH = `#!/usr/bin/env bash
@@ -398,6 +398,15 @@ fi
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const CLAUDE_SETTINGS = `{
+  "permissions": {
+    "allow": [
+      "mcp__agent-collab__*",
+      "Read(*)",
+      "Grep(*)",
+      "Write(*)",
+      "Edit(*)"
+    ]
+  },
   "mcpServers": {
     "agent-collab": {
       "command": "npx",

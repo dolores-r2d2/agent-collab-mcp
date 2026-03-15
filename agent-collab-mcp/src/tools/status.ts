@@ -108,7 +108,7 @@ export function registerStatusTools(server: McpServer): void {
         if (single) {
           return text(header, `${reviewCount} task(s) are in review. You have all tools — call review_task to review them.`);
         }
-        return text(header, `WAIT: ${reviewCount} task(s) are pending review by the other agent. Do NOT start new work until reviews complete.`);
+        return text(header, `WAIT: ${reviewCount} task(s) are pending review by the other agent. The reviewer was auto-invoked when you submitted. If it hasn't started, call trigger_review() to dispatch it manually.`);
       }
 
       const totalTasks = (db.prepare(
@@ -116,16 +116,21 @@ export function registerStatusTools(server: McpServer): void {
       ).get() as { cnt: number }).cnt;
 
       if (totalTasks === 0) {
+        const epicCount = (db.prepare("SELECT COUNT(*) as cnt FROM epics").get() as { cnt: number }).cnt;
+        const historyHint = epicCount > 0
+          ? ` This project has ${epicCount} archived epic(s) — call get_codebase_context() to see past work before starting.`
+          : "";
+
         if (access.task_create) {
-          return text(header, `No tasks exist yet. Create an HLD with set_context("hld", ...) and then create tasks with create_task(...).`);
+          return text(header, `No tasks on the board.${historyHint} Create an HLD with set_context("hld", ...) and then create tasks with create_task(...). Set notify_builder=true on the last create_task to auto-invoke the builder.`);
         }
         if (single) {
-          return text(header, `No tasks exist yet. You have all tools — start by creating tasks with create_task(...).`);
+          return text(header, `No tasks on the board.${historyHint} You have all tools — start by creating tasks with create_task(...).`);
         }
-        return text(header, `STOP: No tasks exist. Do NOT write code directly. The other agent must create tasks first.`);
+        return text(header, `STOP: No tasks exist.${historyHint} Do NOT write code directly. The architect agent must create tasks first.`);
       }
 
-      return text(header, "All tasks are done. No work remaining. Create new tasks if there are new requirements.");
+      return text(header, "All tasks are done. Consider archiving this work with archive_epic(\"<name>\") to clear the board for the next feature. Or create new tasks if there are more requirements.");
     }
   );
 

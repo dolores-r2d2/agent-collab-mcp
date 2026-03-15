@@ -95,6 +95,26 @@ function apiStrategies() {
   }));
 }
 
+function apiEpics(db: Database.Database) {
+  return db.prepare(
+    "SELECT id, name, description, summary, strategy, engine_mode, task_count, archived_at FROM epics ORDER BY CAST(SUBSTR(id, 3) AS INTEGER) DESC"
+  ).all();
+}
+
+function apiEpicDetail(db: Database.Database, epicId: string) {
+  const epic = db.prepare("SELECT * FROM epics WHERE id = ?").get(epicId);
+  if (!epic) return null;
+  const tasks = db.prepare(
+    "SELECT task_id, title, status, owner, context, acceptance, plan, reviews_json, created_at, updated_at FROM epic_tasks WHERE epic_id = ? ORDER BY task_id"
+  ).all(epicId);
+  return { ...(epic as object), tasks };
+}
+
+function getProjectName(db: Database.Database): string {
+  const row = db.prepare("SELECT value FROM config WHERE key = 'project_name'").get() as { value: string } | undefined;
+  return row?.value ?? path.basename(process.cwd());
+}
+
 function parsePort(): number {
   const idx = process.argv.indexOf("--port");
   if (idx !== -1 && process.argv[idx + 1]) {
@@ -134,6 +154,19 @@ const server = http.createServer((req, res) => {
         }
         case "/api/strategies":
           data = apiStrategies();
+          break;
+        case "/api/epics":
+          data = apiEpics(db);
+          break;
+        case "/api/epic": {
+          const eid = url.searchParams.get("id");
+          if (!eid) { res.writeHead(400); res.end('{"error":"missing id"}'); return; }
+          data = apiEpicDetail(db, eid);
+          if (!data) { res.writeHead(404); res.end('{"error":"not found"}'); return; }
+          break;
+        }
+        case "/api/project-name":
+          data = { name: getProjectName(db) };
           break;
         default:
           res.writeHead(404);
@@ -381,12 +414,23 @@ main{display:flex;flex-direction:column;gap:1.2rem;padding:1.5rem 2rem;max-width
 .review-entry .review-notes{font-size:.78rem;color:var(--fg-1);margin-top:.3rem}
 .review-issue{font-size:.75rem;color:var(--fg-1);padding:.2rem 0;font-family:var(--font-mono)}
 .review-issue .issue-loc{color:var(--accent)}
+
+/* ── Epics ──────────────────────────────────────────────── */
+.epic-item{
+  background:var(--bg-2);border:1px solid var(--bg-3);border-radius:var(--radius-sm);
+  padding:.6rem .8rem;margin-bottom:.5rem;cursor:pointer;transition:all .15s;
+  border-left:3px solid var(--accent);
+}
+.epic-item:hover{border-color:var(--accent);transform:translateY(-1px);box-shadow:var(--shadow)}
+.epic-item .epic-name{font-size:.82rem;font-weight:600}
+.epic-item .epic-meta{font-size:.6rem;font-family:var(--font-mono);color:var(--fg-2);margin-top:.2rem}
 </style>
 </head>
 <body>
 
 <header>
   <h1>Agent Collab</h1>
+  <span id="h-project" style="font-size:.8rem;color:var(--fg-1);font-family:var(--font-mono)"></span>
   <div class="header-meta">
     <span class="badge badge-strategy" id="h-strategy">—</span>
     <span class="badge badge-engine" id="h-engine">—</span>
@@ -408,6 +452,10 @@ main{display:flex;flex-direction:column;gap:1.2rem;padding:1.5rem 2rem;max-width
       <div class="panel" id="strategy-panel">
         <h3><span class="icon">&#9881;</span> Strategy</h3>
         <div id="strategy-content"></div>
+      </div>
+      <div class="panel" id="epics-panel">
+        <h3><span class="icon">&#128230;</span> Archived Epics</h3>
+        <div id="epics-list"></div>
       </div>
       <div class="panel">
         <h3><span class="icon">&#9889;</span> Activity</h3>
@@ -569,17 +617,72 @@ document.getElementById('modal-overlay').addEventListener('click', function(e) {
 });
 document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeModal(); });
 
+function renderEpics(epics) {
+  const el = document.getElementById('epics-list');
+  if (!epics || epics.length === 0) {
+    el.innerHTML = '<div class="empty-state">No archived epics</div>';
+    return;
+  }
+  el.innerHTML = epics.map(e =>
+    '<div class="epic-item" onclick="openEpic(\\''+escHtml(e.id)+'\\')">'+
+      '<div class="epic-name">'+escHtml(e.id)+': '+escHtml(e.name)+'</div>'+
+      '<div class="epic-meta">'+e.task_count+' tasks &bull; '+escHtml(e.archived_at||'')+'</div>'+
+    '</div>'
+  ).join('');
+}
+
+async function openEpic(id) {
+  const data = await fetchJSON('/api/epic?id='+encodeURIComponent(id));
+  if (!data) return;
+
+  const tasks = data.tasks || [];
+  const taskHtml = tasks.map(t => {
+    let reviews = '';
+    if (t.reviews_json) {
+      try {
+        const rs = JSON.parse(t.reviews_json);
+        reviews = rs.map(r => '<span class="verdict-badge '+r.verdict+'">R'+r.round+': '+r.verdict+'</span>').join(' ');
+      } catch(e) {}
+    }
+    return '<div class="review-entry"><div class="review-header">'+
+      '<span class="round-badge">'+escHtml(t.task_id)+'</span>'+
+      '<span class="modal-status '+t.status+'">'+escHtml(t.status)+'</span>'+
+      '</div><div style="font-size:.82rem;font-weight:600;margin:.3rem 0">'+escHtml(t.title)+'</div>'+
+      (reviews ? '<div style="margin-top:.2rem">'+reviews+'</div>' : '')+
+      '</div>';
+  }).join('');
+
+  document.getElementById('modal').innerHTML =
+    '<div class="modal-header">'+
+      '<span class="task-id-big">'+escHtml(data.id)+'</span>'+
+      '<span class="task-title-big">'+escHtml(data.name)+'</span>'+
+      '<button class="modal-close" onclick="closeModal()">\\u2715</button>'+
+    '</div>'+
+    (data.description ? '<div style="color:var(--fg-1);font-size:.85rem;margin-bottom:1rem">'+escHtml(data.description)+'</div>' : '')+
+    '<div style="font-size:.72rem;color:var(--fg-2);margin-bottom:1rem">'+
+      data.task_count+' tasks &bull; Strategy: '+escHtml(data.strategy||'—')+' &bull; Archived: '+escHtml(data.archived_at||'')+
+    '</div>'+
+    (data.summary ? '<div class="modal-section"><h4>Summary</h4><pre>'+escHtml(data.summary)+'</pre></div>' : '')+
+    '<div class="modal-section"><h4>Tasks</h4>'+taskHtml+'</div>';
+
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
 async function refresh() {
   try {
-    const [overview, tasks, activity] = await Promise.all([
+    const [overview, tasks, activity, epics, proj] = await Promise.all([
       fetchJSON('/api/overview'),
       fetchJSON('/api/tasks'),
       fetchJSON('/api/activity?limit=30'),
+      fetchJSON('/api/epics'),
+      fetchJSON('/api/project-name'),
     ]);
     renderStats(overview);
     renderKanban(tasks);
     renderStrategy(overview);
     renderActivity(activity);
+    renderEpics(epics);
+    if (proj && proj.name) document.getElementById('h-project').textContent = proj.name;
   } catch(e) {
     console.error('Refresh failed:', e);
   }

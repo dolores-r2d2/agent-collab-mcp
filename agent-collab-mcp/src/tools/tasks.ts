@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getDb, getRole, getToolAccess, getDefaultOwner, nextTaskId } from "../db.js";
+import { getDb, getRole, getToolAccess, getDefaultOwner, nextTaskId, isSingleEngine } from "../db.js";
+import { dispatchReview, dispatchBuilder, formatResult } from "../dispatch.js";
 
 interface TaskRow {
   id: string;
@@ -79,8 +80,9 @@ export function registerTaskTools(server: McpServer): void {
         acceptance: z.string().describe("Criteria that define done"),
         depends_on: z.string().optional().describe("Comma-separated task IDs this depends on"),
         owner: z.enum(["cursor", "claude-code"]).optional().describe("Task owner (defaults based on engine mode)"),
+        notify_builder: z.boolean().optional().describe("If true, auto-invoke the builder agent to start working. Use on the last task in a batch."),
       },
-      async ({ title, context, acceptance, depends_on, owner }) => {
+      async ({ title, context, acceptance, depends_on, owner, notify_builder: shouldNotify }) => {
         const db = getDb();
         const id = nextTaskId(db);
         const taskOwner = owner || getDefaultOwner();
@@ -94,12 +96,15 @@ export function registerTaskTools(server: McpServer): void {
           "INSERT INTO activity_log (agent, action) VALUES (?, ?)"
         ).run(role, `Created task ${id}: ${title} (owner: ${taskOwner})`);
 
-        return {
-          content: [{
-            type: "text",
-            text: `Created ${id}: "${title}" (assigned to ${taskOwner}).`
-          }]
-        };
+        let text = `Created ${id}: "${title}" (assigned to ${taskOwner}).`;
+
+        if (shouldNotify && !isSingleEngine()) {
+          const assigned = db.prepare("SELECT id FROM tasks WHERE status = 'assigned' ORDER BY id").all() as { id: string }[];
+          const result = dispatchBuilder(assigned.map(t => t.id), `${assigned.length} task(s) are ready for you.`);
+          text += `\nBuilder notification: ${formatResult(result)}`;
+        }
+
+        return { content: [{ type: "text", text }] };
       }
     );
   }
@@ -217,12 +222,16 @@ export function registerTaskTools(server: McpServer): void {
           "INSERT INTO activity_log (agent, action) VALUES (?, ?)"
         ).run(role, `Submitted ${task_id} for review: ${summary}`);
 
-        return {
-          content: [{
-            type: "text",
-            text: `${task_id} submitted for review. Call get_my_status to see your next action.`
-          }]
-        };
+        let text = `${task_id} submitted for review.`;
+
+        if (!isSingleEngine()) {
+          const result = dispatchReview([task_id]);
+          text += ` Reviewer: ${formatResult(result)}`;
+        }
+
+        text += ` Call get_my_status to see your next action.`;
+
+        return { content: [{ type: "text", text }] };
       }
     );
   }

@@ -8,7 +8,6 @@ set -euo pipefail
 #   scripts/dashboard.sh [--port 4800]
 # ─────────────────────────────────────────────────────────────────────────────
 
-PORT="${1:-}"
 ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -29,4 +28,4 @@ if [[ ! -f ".agent-collab/collab.db" ]]; then
   exit 1
 fi
 
-exec node agent-collab-mcp/build/dashboard.js "${ARGS[@]}"
+exec node agent-collab-mcp/build/dashboard.js ${ARGS[@]+"${ARGS[@]}"}

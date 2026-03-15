@@ -78,6 +78,35 @@ function migrate(db: Database.Database): void {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS epics (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      summary TEXT,
+      strategy TEXT,
+      engine_mode TEXT,
+      task_count INTEGER DEFAULT 0,
+      context_json TEXT,
+      activity_json TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      archived_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS epic_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      epic_id TEXT NOT NULL REFERENCES epics(id),
+      task_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL,
+      owner TEXT,
+      context TEXT,
+      acceptance TEXT,
+      plan TEXT,
+      reviews_json TEXT,
+      created_at TEXT,
+      updated_at TEXT
+    );
   `);
 }
 
@@ -175,4 +204,14 @@ export function nextTaskId(db: Database.Database): string {
   if (!row) return "T-001";
   const num = parseInt(row.id.replace("T-", ""), 10);
   return `T-${String(num + 1).padStart(3, "0")}`;
+}
+
+export function nextEpicId(db: Database.Database): string {
+  const row = db.prepare(
+    "SELECT id FROM epics ORDER BY CAST(SUBSTR(id, 3) AS INTEGER) DESC LIMIT 1"
+  ).get() as { id: string } | undefined;
+
+  if (!row) return "E-001";
+  const num = parseInt(row.id.replace("E-", ""), 10);
+  return `E-${String(num + 1).padStart(3, "0")}`;
 }
