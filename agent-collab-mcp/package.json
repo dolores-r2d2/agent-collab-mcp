@@ -1,6 +1,6 @@
 {
   "name": "agent-collab-mcp",
-  "version": "1.4.1",
+  "version": "2.0.0",
   "description": "MCP server for multi-agent coordination between Cursor and Claude Code. Strategies, task management, review loops, and a live dashboard.",
   "type": "module",
   "main": "build/index.js",
@@ -16,6 +16,7 @@
     "start": "node build/index.js",
     "dev": "tsx src/index.ts",
     "dashboard": "node build/dashboard.js",
+    "test": "vitest run",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -41,6 +42,7 @@
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
     "tsx": "^4.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.0"
   }
 }

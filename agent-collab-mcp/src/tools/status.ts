@@ -1,24 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getDb, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig, isSingleEngine } from "../db.js";
 import { dispatchReview, formatResult } from "../dispatch.js";
-
-interface TaskRow {
-  id: string;
-  title: string;
-  status: string;
-  owner: string;
-}
-
-interface CountRow {
-  status: string;
-  cnt: number;
-}
-
-interface ActivityRow {
-  timestamp: string;
-  agent: string;
-  action: string;
-}
+import type { TaskRow, CountRow, ActivityRow } from "../types.js";
 
 function buildToolList(access: ReturnType<typeof getMyRoleConfig>["tools"], single: boolean): string {
   const tools: string[] = [];
@@ -52,7 +35,7 @@ export function registerStatusTools(server: McpServer): void {
       const header = `[Strategy: ${strategy.name}] [Engine: ${engineMode}] [Role: ${roleConfig.name}]\n${toolLine}`;
 
       const inProgress = db.prepare(
-        "SELECT id, title FROM tasks WHERE status = 'in-progress' LIMIT 1"
+        "SELECT id, title FROM tasks WHERE status = 'in-progress' ORDER BY priority DESC, id LIMIT 1"
       ).get() as TaskRow | undefined;
 
       if (inProgress) {
@@ -60,7 +43,7 @@ export function registerStatusTools(server: McpServer): void {
       }
 
       const changesReq = db.prepare(
-        "SELECT id, title FROM tasks WHERE status = 'changes-requested' LIMIT 1"
+        "SELECT id, title FROM tasks WHERE status = 'changes-requested' ORDER BY priority DESC, id LIMIT 1"
       ).get() as TaskRow | undefined;
 
       if (changesReq) {
@@ -69,7 +52,7 @@ export function registerStatusTools(server: McpServer): void {
 
       if (access.review_write) {
         const reviewTasks = db.prepare(
-          "SELECT id, title FROM tasks WHERE status = 'review' ORDER BY id"
+          "SELECT id, title FROM tasks WHERE status = 'review' ORDER BY priority DESC, id"
         ).all() as TaskRow[];
         if (reviewTasks.length > 0) {
           const list = reviewTasks.map(t => `  - ${t.id}: ${t.title}`).join("\n");
@@ -81,7 +64,7 @@ export function registerStatusTools(server: McpServer): void {
       }
 
       const assigned = db.prepare(
-        "SELECT id, title FROM tasks WHERE status = 'assigned' ORDER BY id LIMIT 1"
+        "SELECT id, title FROM tasks WHERE status = 'assigned' ORDER BY priority DESC, id LIMIT 1"
       ).get() as TaskRow | undefined;
 
       if (assigned) {
@@ -106,7 +89,7 @@ export function registerStatusTools(server: McpServer): void {
       }
 
       const totalTasks = (db.prepare(
-        "SELECT COUNT(*) as cnt FROM tasks"
+        "SELECT COUNT(*) as cnt FROM tasks WHERE status != 'cancelled'"
       ).get() as { cnt: number }).cnt;
 
       if (totalTasks === 0) {

@@ -1,22 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { isInitialized, getDb, getRole, getToolAccess } from "../db.js";
-
-const NOT_SETUP = { content: [{ type: "text" as const, text: "Project not set up. Call setup_project first." }] };
-
-interface TaskRow {
-  id: string;
-  title: string;
-  status: string;
-}
-
-interface ReviewRow {
-  round: number;
-  verdict: string;
-  issues: string | null;
-  notes: string | null;
-  created_at: string;
-}
+import { isInitialized, getDb, getRole, getToolAccess, recordTransition } from "../db.js";
+import { NOT_SETUP, err } from "../errors.js";
+import { parseIssues, formatIssuesList } from "../utils.js";
+import type { TaskRow, ReviewRow } from "../types.js";
 
 export function registerReviewTools(server: McpServer): void {
   server.tool(
@@ -30,22 +17,16 @@ export function registerReviewTools(server: McpServer): void {
         "SELECT round, verdict, issues, notes, created_at FROM reviews WHERE task_id = ? ORDER BY round DESC LIMIT 1"
       ).get(task_id) as ReviewRow | undefined;
 
-      if (!review) {
-        return { content: [{ type: "text", text: `No reviews found for ${task_id}.` }] };
-      }
+      if (!review) return err("NOT_FOUND", `No reviews found for ${task_id}.`);
 
       let text = `Review round ${review.round} (${review.created_at}): ${review.verdict}\n`;
 
-      if (review.issues) {
+      const issues = parseIssues(review.issues);
+      if (issues.length > 0) {
         text += "\nIssues:\n";
-        try {
-          const issues = JSON.parse(review.issues);
-          for (const issue of issues) {
-            const severity = issue.severity ? `[${issue.severity}]` : "";
-            text += `  ${severity} [${issue.file || "general"}${issue.line ? ":" + issue.line : ""}] ${issue.description}\n`;
-          }
-        } catch {
-          text += `  ${review.issues}\n`;
+        for (const issue of issues) {
+          const severity = issue.severity ? `[${issue.severity}]` : "";
+          text += `  ${severity} [${issue.file || "general"}${issue.line ? ":" + issue.line : ""}] ${issue.description}\n`;
         }
       }
 
@@ -73,25 +54,16 @@ export function registerReviewTools(server: McpServer): void {
     },
     async ({ task_id, verdict, issues, notes }) => {
       if (!isInitialized()) return NOT_SETUP;
-      if (!getToolAccess().review_write) {
-        return { content: [{ type: "text", text: "review_task is not available for your current role. Call get_my_status to see your available tools." }] };
-      }
+      if (!getToolAccess().review_write) return err("NO_ACCESS", "review_task is not available for your current role.");
 
       const db = getDb();
       const role = getRole();
       const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task_id) as TaskRow | undefined;
 
-      if (!task) {
-        return { content: [{ type: "text", text: `Task ${task_id} not found.` }] };
-      }
+      if (!task) return err("NOT_FOUND", `Task ${task_id} not found.`);
 
       if (task.status !== "review") {
-        return {
-          content: [{
-            type: "text",
-            text: `Cannot review ${task_id}: status is "${task.status}". Only "review" tasks can be reviewed.`
-          }]
-        };
+        return err("INVALID_STATE", `Cannot review ${task_id}: status is "${task.status}". Only "review" tasks can be reviewed.`);
       }
 
       const lastReview = db.prepare(
@@ -109,6 +81,11 @@ export function registerReviewTools(server: McpServer): void {
       db.prepare(
         "UPDATE tasks SET status = ?, updated_at = datetime('now') WHERE id = ?"
       ).run(newStatus, task_id);
+      recordTransition(db, task_id, "review", newStatus, role);
+
+      if (newStatus === "done") {
+        db.prepare("DELETE FROM file_reservations WHERE task_id = ?").run(task_id);
+      }
 
       db.prepare(
         "INSERT INTO activity_log (agent, action) VALUES (?, ?)"
@@ -125,10 +102,7 @@ export function registerReviewTools(server: McpServer): void {
 
       let text = `${task_id} needs changes (round ${round}). Status set to changes-requested.\n`;
       if (issues && issues.length > 0) {
-        text += "\nIssues to fix:\n";
-        for (const issue of issues) {
-          text += `  - [${issue.file || "general"}${issue.line ? ":" + issue.line : ""}] ${issue.description}\n`;
-        }
+        text += "\nIssues to fix:\n" + formatIssuesList(issues);
       }
       if (notes) text += `\nNotes: ${notes}`;
 

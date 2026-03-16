@@ -13,6 +13,7 @@ import {
 
 const DB_DIR = ".agent-collab";
 const DB_FILE = "collab.db";
+const VALID_ROLES = ["cursor", "claude-code"];
 
 let db: Database.Database | null = null;
 
@@ -48,6 +49,7 @@ function migrate(db: Database.Database): void {
       acceptance TEXT,
       plan TEXT,
       summary TEXT,
+      priority INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
@@ -108,7 +110,41 @@ function migrate(db: Database.Database): void {
       created_at TEXT,
       updated_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS dispatches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pid INTEGER NOT NULL,
+      role TEXT NOT NULL,
+      log_file TEXT,
+      status TEXT DEFAULT 'running',
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS file_reservations (
+      path TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES tasks(id),
+      reserved_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS task_comments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL REFERENCES tasks(id),
+      agent TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS task_transitions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL,
+      from_status TEXT NOT NULL,
+      to_status TEXT NOT NULL,
+      agent TEXT NOT NULL,
+      transitioned_at TEXT DEFAULT (datetime('now'))
+    );
   `);
+
+  db.exec(`DELETE FROM activity_log WHERE id NOT IN (SELECT id FROM activity_log ORDER BY id DESC LIMIT 500)`);
 }
 
 export function autoSetup(): void {
@@ -123,7 +159,11 @@ export function autoSetup(): void {
 }
 
 export function getRole(): string {
-  return process.env.AGENT_ROLE || "unknown";
+  const role = process.env.AGENT_ROLE || "unknown";
+  if (role !== "unknown" && !VALID_ROLES.includes(role)) {
+    process.stderr.write(`WARNING: AGENT_ROLE="${role}" is not recognized. Expected "cursor" or "claude-code". Defaulting to "unknown".\n`);
+  }
+  return role;
 }
 
 export function getEngineMode(): EngineMode {
@@ -173,14 +213,6 @@ export function setActiveStrategy(db: Database.Database, strategyId: string): vo
   `).run(strategyId);
 }
 
-/**
- * Returns the RoleConfig for the current agent based on engine mode and AGENT_ROLE.
- *
- * - both + cursor       → strategy.roles.primary
- * - both + claude-code  → strategy.roles.secondary
- * - cursor-only         → merged (primary + secondary)
- * - claude-code-only    → merged (primary + secondary)
- */
 export function getMyRoleConfig(): RoleConfig {
   const strategy = getActiveStrategy();
   const mode = getEngineMode();
@@ -226,4 +258,10 @@ export function nextEpicId(db: Database.Database): string {
   if (!row) return "E-001";
   const num = parseInt(row.id.replace("E-", ""), 10);
   return `E-${String(num + 1).padStart(3, "0")}`;
+}
+
+export function recordTransition(db: Database.Database, taskId: string, fromStatus: string, toStatus: string, agent: string): void {
+  db.prepare(
+    "INSERT INTO task_transitions (task_id, from_status, to_status, agent) VALUES (?, ?, ?, ?)"
+  ).run(taskId, fromStatus, toStatus, agent);
 }

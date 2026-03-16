@@ -1,14 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { isInitialized, getDb, getRole, getToolAccess } from "../db.js";
-
-const NOT_SETUP = { content: [{ type: "text" as const, text: "Project not set up. Call setup_project first." }] };
-
-interface ContextRow {
-  key: string;
-  content: string;
-  updated_at: string;
-}
+import { NOT_SETUP, err } from "../errors.js";
+import type { ContextRow } from "../types.js";
 
 export function registerContextTools(server: McpServer): void {
   server.tool(
@@ -25,7 +19,7 @@ export function registerContextTools(server: McpServer): void {
         const hint = canWrite
           ? `Create one with set_context("${key}", ...).`
           : "The other agent needs to create one first.";
-        return { content: [{ type: "text", text: `No ${key.toUpperCase()} document found. ${hint}` }] };
+        return err("NOT_FOUND", `No ${key.toUpperCase()} document found. ${hint}`);
       }
 
       return { content: [{ type: "text", text: `${key.toUpperCase()} (updated ${row.updated_at}):\n\n${row.content}` }] };
@@ -41,9 +35,7 @@ export function registerContextTools(server: McpServer): void {
     },
     async ({ key, content }) => {
       if (!isInitialized()) return NOT_SETUP;
-      if (!getToolAccess().context_write) {
-        return { content: [{ type: "text", text: "set_context is not available for your current role." }] };
-      }
+      if (!getToolAccess().context_write) return err("NO_ACCESS", "set_context is not available for your current role.");
 
       const db = getDb();
       const role = getRole();

@@ -1,67 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { isInitialized, getDb, getRole, getActiveStrategy, getEngineMode, nextEpicId } from "../db.js";
-
-const NOT_SETUP = { content: [{ type: "text" as const, text: "Project not set up. Call setup_project first." }] };
-
-interface TaskRow {
-  id: string;
-  title: string;
-  status: string;
-  owner: string;
-  context: string | null;
-  acceptance: string | null;
-  plan: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface ReviewRow {
-  round: number;
-  verdict: string;
-  issues: string | null;
-  notes: string | null;
-  created_at: string;
-}
-
-interface ContextRow {
-  key: string;
-  content: string;
-  updated_at: string;
-}
-
-interface ActivityRow {
-  timestamp: string;
-  agent: string;
-  action: string;
-}
-
-interface EpicRow {
-  id: string;
-  name: string;
-  description: string | null;
-  summary: string | null;
-  strategy: string | null;
-  engine_mode: string | null;
-  task_count: number;
-  context_json: string | null;
-  activity_json: string | null;
-  created_at: string;
-  archived_at: string;
-}
-
-interface EpicTaskRow {
-  task_id: string;
-  title: string;
-  status: string;
-  owner: string | null;
-  context: string | null;
-  acceptance: string | null;
-  plan: string | null;
-  reviews_json: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-}
+import { NOT_SETUP, err } from "../errors.js";
+import type { TaskRow, ReviewRow, ContextRow, ActivityRow, EpicRow, EpicTaskRow } from "../types.js";
 
 export function registerEpicTools(server: McpServer): void {
   const role = getRole();
@@ -283,6 +224,62 @@ export function registerEpicTools(server: McpServer): void {
       }
 
       return { content: [{ type: "text", text }] };
+    }
+  );
+
+  server.tool(
+    "restore_epic",
+    "Restore tasks from an archived epic back to the active board.",
+    {
+      epic_id: z.string().describe("Epic ID to restore, e.g. E-001"),
+      confirm: z.boolean().optional().describe("Set to true to confirm"),
+    },
+    async ({ epic_id, confirm }) => {
+      if (!isInitialized()) return NOT_SETUP;
+      const db = getDb();
+      const epic = db.prepare("SELECT * FROM epics WHERE id = ?").get(epic_id) as EpicRow | undefined;
+
+      if (!epic) return err("NOT_FOUND", `Epic ${epic_id} not found.`);
+
+      if (!confirm) {
+        return { content: [{ type: "text", text: `About to restore "${epic.name}" (${epic.task_count} tasks) back to the active board.\n\nExisting tasks will NOT be affected — restored tasks get new IDs.\n\nCall restore_epic("${epic_id}", confirm=true) to proceed.` }] };
+      }
+
+      const epicTasks = db.prepare(
+        "SELECT * FROM epic_tasks WHERE epic_id = ? ORDER BY task_id"
+      ).all(epic_id) as EpicTaskRow[];
+
+      const role = getRole();
+      let restoredCount = 0;
+
+      for (const et of epicTasks) {
+        const newId = (await import("../db.js")).nextTaskId(db);
+        db.prepare(`
+          INSERT INTO tasks (id, title, status, owner, context, acceptance, plan, summary, created_at, updated_at)
+          VALUES (?, ?, 'assigned', ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        `).run(newId, et.title, et.owner || "cursor", et.context, et.acceptance, et.plan, null);
+        restoredCount++;
+      }
+
+      if (epic.context_json) {
+        try {
+          const docs = JSON.parse(epic.context_json) as ContextRow[];
+          for (const doc of docs) {
+            db.prepare(`
+              INSERT INTO context_docs (key, content, updated_at)
+              VALUES (?, ?, datetime('now'))
+              ON CONFLICT(key) DO UPDATE SET content = excluded.content, updated_at = datetime('now')
+            `).run(doc.key, doc.content);
+          }
+        } catch { /* skip malformed */ }
+      }
+
+      db.prepare("DELETE FROM epics WHERE id = ?").run(epic_id);
+      db.prepare("DELETE FROM epic_tasks WHERE epic_id = ?").run(epic_id);
+
+      db.prepare("INSERT INTO activity_log (agent, action) VALUES (?, ?)").run(role, `Restored epic ${epic_id}: "${epic.name}" (${restoredCount} tasks)`);
+
+      return { content: [{ type: "text", text: `Restored ${restoredCount} tasks from "${epic.name}". All tasks reset to "assigned" status with new IDs. Context docs restored. Epic ${epic_id} removed from archive.` }] };
     }
   );
 }

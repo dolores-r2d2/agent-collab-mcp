@@ -12,6 +12,9 @@ import { registerStrategyTools } from "./tools/strategy.js";
 import { registerSetupTools, writeProjectFiles } from "./tools/setup.js";
 import { registerDispatchTools } from "./tools/dispatch.js";
 import { registerEpicTools } from "./tools/epic.js";
+import { registerReservationTools } from "./tools/reservations.js";
+import { registerCommentTools } from "./tools/comments.js";
+import { registerMetricsTools } from "./tools/metrics.js";
 import { isInitialized, autoSetup, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig } from "./db.js";
 
 if (process.argv.includes("--dashboard")) {
@@ -31,7 +34,7 @@ if (process.argv.includes("--dashboard")) {
 
   const server = new McpServer({
     name: "agent-collab",
-    version: "1.4.1",
+    version: "2.0.0",
   }, { instructions });
 
   registerStatusTools(server);
@@ -42,6 +45,9 @@ if (process.argv.includes("--dashboard")) {
   registerStrategyTools(server);
   registerDispatchTools(server);
   registerEpicTools(server);
+  registerReservationTools(server);
+  registerCommentTools(server);
+  registerMetricsTools(server);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

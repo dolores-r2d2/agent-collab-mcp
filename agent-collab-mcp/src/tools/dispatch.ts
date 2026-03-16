@@ -2,15 +2,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { isInitialized, getDb, getRole, isSingleEngine } from "../db.js";
 import { dispatchReview, dispatchBuilder, dispatchArchitect, formatResult } from "../dispatch.js";
+import { NOT_SETUP, err } from "../errors.js";
+import type { TaskRow } from "../types.js";
 
-const NOT_SETUP = { content: [{ type: "text" as const, text: "Project not set up. Call setup_project first." }] };
-const SINGLE_MODE = { content: [{ type: "text" as const, text: "Dispatch tools are only available in 'both' engine mode. In single-engine mode, you handle both roles directly." }] };
-
-interface TaskRow {
-  id: string;
-  title: string;
-  status: string;
-}
+const SINGLE_MODE = err("SINGLE_ENGINE", "Dispatch tools are only available in 'both' engine mode. In single-engine mode, you handle both roles directly.");
 
 export function registerDispatchTools(server: McpServer): void {
   server.tool(

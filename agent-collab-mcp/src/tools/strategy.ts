@@ -2,8 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { isInitialized, getDb, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig, setActiveStrategy, setEngineMode, isSingleEngine } from "../db.js";
 import { getAllStrategies, getStrategyDef, type EngineMode } from "../strategies.js";
-
-const NOT_SETUP = { content: [{ type: "text" as const, text: "Project not set up. Call setup_project first." }] };
+import { NOT_SETUP, err } from "../errors.js";
 
 export function registerStrategyTools(server: McpServer): void {
   server.tool(

@@ -1,31 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { isInitialized, getDb, getRole, getToolAccess, getDefaultOwner, nextTaskId, isSingleEngine } from "../db.js";
+import { isInitialized, getDb, getRole, getToolAccess, getDefaultOwner, nextTaskId, isSingleEngine, recordTransition } from "../db.js";
 import { dispatchBuilder, formatResult } from "../dispatch.js";
-
-const NOT_SETUP = { content: [{ type: "text" as const, text: "Project not set up. Call setup_project first." }] };
-const NO_ACCESS = (tool: string) => ({ content: [{ type: "text" as const, text: `${tool} is not available for your current role. Call get_my_status to see your available tools.` }] });
-
-interface TaskRow {
-  id: string;
-  title: string;
-  status: string;
-  owner: string;
-  depends_on: string | null;
-  context: string | null;
-  acceptance: string | null;
-  plan: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface ReviewRow {
-  round: number;
-  verdict: string;
-  issues: string | null;
-  notes: string | null;
-  created_at: string;
-}
+import { NOT_SETUP, err } from "../errors.js";
+import { parseIssues, formatIssuesList } from "../utils.js";
+import type { TaskRow, ReviewRow } from "../types.js";
 
 export function registerTaskTools(server: McpServer): void {
   server.tool(
@@ -37,9 +16,7 @@ export function registerTaskTools(server: McpServer): void {
       const db = getDb();
       const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task_id) as TaskRow | undefined;
 
-      if (!task) {
-        return { content: [{ type: "text", text: `Task ${task_id} not found.` }] };
-      }
+      if (!task) return err("NOT_FOUND", `Task ${task_id} not found.`);
 
       const latestReview = db.prepare(
         "SELECT round, verdict, issues, notes, created_at FROM reviews WHERE task_id = ? ORDER BY round DESC LIMIT 1"
@@ -54,16 +31,8 @@ export function registerTaskTools(server: McpServer): void {
 
       if (latestReview) {
         text += `\nLatest review (round ${latestReview.round}): ${latestReview.verdict}\n`;
-        if (latestReview.issues) {
-          try {
-            const issues = JSON.parse(latestReview.issues);
-            for (const issue of issues) {
-              text += `  - [${issue.file || "general"}${issue.line ? ":" + issue.line : ""}] ${issue.description}\n`;
-            }
-          } catch {
-            text += `  Issues: ${latestReview.issues}\n`;
-          }
-        }
+        const issues = parseIssues(latestReview.issues);
+        if (issues.length > 0) text += formatIssuesList(issues) + "\n";
         if (latestReview.notes) text += `  Notes: ${latestReview.notes}\n`;
       }
 
@@ -80,11 +49,12 @@ export function registerTaskTools(server: McpServer): void {
       acceptance: z.string().describe("Criteria that define done"),
       depends_on: z.string().optional().describe("Comma-separated task IDs this depends on"),
       owner: z.enum(["cursor", "claude-code"]).optional().describe("Task owner (defaults based on engine mode)"),
+      priority: z.number().optional().describe("Priority (higher = more important, default 0)"),
       notify_builder: z.boolean().optional().describe("If true, auto-invoke the builder agent to start working. Use on the last task in a batch."),
     },
-    async ({ title, context, acceptance, depends_on, owner, notify_builder: shouldNotify }) => {
+    async ({ title, context, acceptance, depends_on, owner, priority, notify_builder: shouldNotify }) => {
       if (!isInitialized()) return NOT_SETUP;
-      if (!getToolAccess().task_create) return NO_ACCESS("create_task");
+      if (!getToolAccess().task_create) return err("NO_ACCESS", "create_task is not available for your current role.");
 
       const db = getDb();
       const role = getRole();
@@ -92,9 +62,9 @@ export function registerTaskTools(server: McpServer): void {
       const taskOwner = owner || getDefaultOwner();
 
       db.prepare(`
-        INSERT INTO tasks (id, title, status, owner, depends_on, context, acceptance)
-        VALUES (?, ?, 'assigned', ?, ?, ?, ?)
-      `).run(id, title, taskOwner, depends_on || null, context, acceptance);
+        INSERT INTO tasks (id, title, status, owner, depends_on, context, acceptance, priority)
+        VALUES (?, ?, 'assigned', ?, ?, ?, ?, ?)
+      `).run(id, title, taskOwner, depends_on || null, context, acceptance, priority ?? 0);
 
       db.prepare(
         "INSERT INTO activity_log (agent, action) VALUES (?, ?)"
@@ -118,28 +88,34 @@ export function registerTaskTools(server: McpServer): void {
     { task_id: z.string().describe("Task ID to claim, e.g. T-001") },
     async ({ task_id }) => {
       if (!isInitialized()) return NOT_SETUP;
-      if (!getToolAccess().task_claim) return NO_ACCESS("claim_task");
+      if (!getToolAccess().task_claim) return err("NO_ACCESS", "claim_task is not available for your current role.");
 
       const db = getDb();
       const role = getRole();
       const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task_id) as TaskRow | undefined;
 
-      if (!task) {
-        return { content: [{ type: "text", text: `Task ${task_id} not found.` }] };
-      }
+      if (!task) return err("NOT_FOUND", `Task ${task_id} not found.`);
 
       if (task.status !== "assigned" && task.status !== "changes-requested") {
-        return {
-          content: [{
-            type: "text",
-            text: `Cannot claim ${task_id}: status is "${task.status}". Only "assigned" or "changes-requested" tasks can be claimed.`
-          }]
-        };
+        return err("INVALID_STATE", `Cannot claim ${task_id}: status is "${task.status}". Only "assigned" or "changes-requested" tasks can be claimed.`);
       }
 
+      if (task.depends_on) {
+        const deps = task.depends_on.split(",").map(d => d.trim());
+        const placeholders = deps.map(() => "?").join(",");
+        const notDone = db.prepare(
+          `SELECT id, status FROM tasks WHERE id IN (${placeholders}) AND status != 'done'`
+        ).all(...deps) as { id: string; status: string }[];
+        if (notDone.length > 0) {
+          return err("DEPENDENCY_BLOCKED", `Cannot claim ${task_id}: depends on ${notDone.map(d => `${d.id} (${d.status})`).join(", ")}. Complete those first.`);
+        }
+      }
+
+      const prevStatus = task.status;
       db.prepare(
         "UPDATE tasks SET status = 'in-progress', updated_at = datetime('now') WHERE id = ?"
       ).run(task_id);
+      recordTransition(db, task_id, prevStatus, "in-progress", role);
 
       db.prepare(
         "INSERT INTO activity_log (agent, action) VALUES (?, ?)"
@@ -153,14 +129,9 @@ export function registerTaskTools(server: McpServer): void {
         ).get(task_id) as ReviewRow | undefined;
 
         if (review?.issues) {
-          text += "\n\nReview issues to fix:\n";
-          try {
-            const issues = JSON.parse(review.issues);
-            for (const issue of issues) {
-              text += `  - [${issue.file || "general"}${issue.line ? ":" + issue.line : ""}] ${issue.description}\n`;
-            }
-          } catch {
-            text += `  ${review.issues}\n`;
+          const issues = parseIssues(review.issues);
+          if (issues.length > 0) {
+            text += "\n\nReview issues to fix:\n" + formatIssuesList(issues);
           }
         }
       }
@@ -178,14 +149,12 @@ export function registerTaskTools(server: McpServer): void {
     },
     async ({ task_id, plan }) => {
       if (!isInitialized()) return NOT_SETUP;
-      if (!getToolAccess().save_plan) return NO_ACCESS("save_plan");
+      if (!getToolAccess().save_plan) return err("NO_ACCESS", "save_plan is not available for your current role.");
 
       const db = getDb();
       const task = db.prepare("SELECT status FROM tasks WHERE id = ?").get(task_id) as TaskRow | undefined;
 
-      if (!task) {
-        return { content: [{ type: "text", text: `Task ${task_id} not found.` }] };
-      }
+      if (!task) return err("NOT_FOUND", `Task ${task_id} not found.`);
 
       db.prepare(
         "UPDATE tasks SET plan = ?, updated_at = datetime('now') WHERE id = ?"
@@ -204,28 +173,22 @@ export function registerTaskTools(server: McpServer): void {
     },
     async ({ task_id, summary }) => {
       if (!isInitialized()) return NOT_SETUP;
-      if (!getToolAccess().task_submit) return NO_ACCESS("submit_for_review");
+      if (!getToolAccess().task_submit) return err("NO_ACCESS", "submit_for_review is not available for your current role.");
 
       const db = getDb();
       const role = getRole();
       const task = db.prepare("SELECT status FROM tasks WHERE id = ?").get(task_id) as TaskRow | undefined;
 
-      if (!task) {
-        return { content: [{ type: "text", text: `Task ${task_id} not found.` }] };
-      }
+      if (!task) return err("NOT_FOUND", `Task ${task_id} not found.`);
 
       if (task.status !== "in-progress") {
-        return {
-          content: [{
-            type: "text",
-            text: `Cannot submit ${task_id}: status is "${task.status}". Only "in-progress" tasks can be submitted.`
-          }]
-        };
+        return err("INVALID_STATE", `Cannot submit ${task_id}: status is "${task.status}". Only "in-progress" tasks can be submitted.`);
       }
 
       db.prepare(
         "UPDATE tasks SET status = 'review', summary = ?, updated_at = datetime('now') WHERE id = ?"
       ).run(summary, task_id);
+      recordTransition(db, task_id, "in-progress", "review", role);
 
       db.prepare(
         "INSERT INTO activity_log (agent, action) VALUES (?, ?)"
@@ -240,6 +203,38 @@ export function registerTaskTools(server: McpServer): void {
       text += ` Call get_my_status to see your next action.`;
 
       return { content: [{ type: "text", text }] };
+    }
+  );
+
+  server.tool(
+    "cancel_task",
+    "Cancel a task. Task is preserved for audit but hidden from active board.",
+    {
+      task_id: z.string().describe("Task ID to cancel"),
+      reason: z.string().describe("Reason for cancellation"),
+    },
+    async ({ task_id, reason }) => {
+      if (!isInitialized()) return NOT_SETUP;
+
+      const db = getDb();
+      const role = getRole();
+      const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task_id) as TaskRow | undefined;
+
+      if (!task) return err("NOT_FOUND", `Task ${task_id} not found.`);
+      if (task.status === "done") return err("INVALID_STATE", `Cannot cancel ${task_id}: already done.`);
+      if (task.status === "cancelled") return err("INVALID_STATE", `${task_id} is already cancelled.`);
+
+      const prevStatus = task.status;
+      db.prepare(
+        "UPDATE tasks SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?"
+      ).run(task_id);
+      recordTransition(db, task_id, prevStatus, "cancelled", role);
+
+      db.prepare(
+        "INSERT INTO activity_log (agent, action) VALUES (?, ?)"
+      ).run(role, `Cancelled ${task_id}: ${reason}`);
+
+      return { content: [{ type: "text", text: `${task_id} cancelled. Reason: ${reason}` }] };
     }
   );
 }
