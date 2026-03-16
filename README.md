@@ -6,12 +6,12 @@ Multi-agent coordination system for Cursor and Claude Code. Provides structured 
 
 Tell your AI agent (Cursor or Claude Code):
 
-> Install the agent-collab MCP from `https://github.com/michaelto20/agent-collab-skeleton.git` and set it up for this project.
+> Install the agent-collab MCP from `https://github.com/dolores-r2d2/agent-collab-mcp.git` and set it up for this project.
 
 Or run it yourself:
 
 ```bash
-git clone https://github.com/michaelto20/agent-collab-skeleton.git /tmp/agent-collab && \
+git clone https://github.com/dolores-r2d2/agent-collab-mcp.git /tmp/agent-collab && \
   /tmp/agent-collab/init.sh --strategy architect-builder --engines both
 ```
 
@@ -101,7 +101,7 @@ If you're an AI agent asked to install this MCP, here's the exact flow:
 
 1. **Clone** the skeleton repo to a temp location:
    ```bash
-   git clone https://github.com/michaelto20/agent-collab-skeleton.git /tmp/agent-collab
+   git clone https://github.com/dolores-r2d2/agent-collab-mcp.git /tmp/agent-collab
    ```
 
 2. **Run init.sh** from the target project root:
