@@ -2,70 +2,58 @@
 
 Multi-agent coordination system for Cursor and Claude Code. Provides structured task management, review loops, configurable collaboration strategies, and a live dashboard.
 
-## Quick Start
+## Quick Start (One Command)
 
-### 1. Add the MCP server to your project
+Tell your AI agent (Cursor or Claude Code):
 
-Create or edit `.cursor/mcp.json` in your project root:
+> Install the agent-collab MCP from `https://github.com/michaelto20/agent-collab-skeleton.git` and set it up for this project.
 
-```json
-{
-  "mcpServers": {
-    "agent-collab": {
-      "command": "npx",
-      "args": ["-y", "agent-collab-mcp"],
-      "env": {
-        "AGENT_ROLE": "cursor"
-      }
-    }
-  }
-}
+Or run it yourself:
+
+```bash
+git clone https://github.com/michaelto20/agent-collab-skeleton.git /tmp/agent-collab && \
+  /tmp/agent-collab/init.sh --strategy architect-builder --engines both
 ```
 
-### 2. Open Cursor
+That's it. The `init.sh` script handles everything:
+- Copies the MCP server into your project (`agent-collab-mcp/`)
+- Installs dependencies and builds
+- Scaffolds config files for Cursor (`.cursor/mcp.json`, hooks, rules) and Claude Code (`.claude/settings.json`, hooks)
+- Initializes the SQLite database (`.agent-collab/collab.db`)
+- Updates `.gitignore`
 
-Cursor will detect the MCP server and walk you through setup — asking which collaboration strategy and engine mode you want.
+After setup, open Cursor or run `claude` — the agent will call `get_my_status` and start working.
 
-### 3. Start working
+### Dashboard
 
-The agent will manage the full workflow: creating tasks, implementing, reviewing, and iterating.
-
-### 4. Dashboard
-
-After setup, launch the live task board:
+The dashboard auto-starts with the MCP server at **http://localhost:4800**. You can also launch it manually:
 
 ```bash
 scripts/dashboard.sh
-# → http://localhost:4800
 ```
 
-## Engine Modes
+---
 
-| Mode | Description |
-|------|-------------|
-| `cursor-only` | Cursor handles both roles (default for single-agent setup) |
-| `both` | Cursor = Primary, Claude Code = Secondary |
-| `claude-code-only` | Claude Code handles both roles |
+## Setup Options
 
-For `both` mode, also add to `.claude/settings.json`:
+### Engine Modes
 
-```json
-{
-  "mcpServers": {
-    "agent-collab": {
-      "command": "npx",
-      "args": ["-y", "agent-collab-mcp"],
-      "env": {
-        "AGENT_ROLE": "claude-code"
-      }
-    }
-  }
-}
+| Mode | Cursor | Claude Code | Use Case |
+|------|--------|-------------|----------|
+| `both` (default) | Primary role | Secondary role | Two-agent collaboration |
+| `cursor-only` | Both roles | Not used | Single-agent in Cursor |
+| `claude-code-only` | Not used | Both roles | Single-agent in Claude Code |
+
+```bash
+# Examples
+init.sh --engines both                # Cursor + Claude Code (default)
+init.sh --engines cursor-only         # Cursor only
+init.sh --engines claude-code-only    # Claude Code only
 ```
 
-## Collaboration Strategies
+### Collaboration Strategies
 
-Six research-backed strategies — choose during setup or switch at runtime via MCP tools:
+Six research-backed strategies — choose during setup or switch at runtime via `set_strategy()`:
 
 | Strategy | Primary Role | Secondary Role | Best For |
 |----------|-------------|---------------|----------|
@@ -76,15 +64,61 @@ Six research-backed strategies — choose during setup or switch at runtime via 
 | `planner-executor` | Executor | Planner / Specifier | Complex systems, refactors |
 | `sequential-pipeline` | Implementer | Quality Pipeline Mgr | Enterprise, production code |
 
-## CLI Alternative
-
-If you prefer CLI setup over Cursor-interactive:
-
 ```bash
-git clone https://github.com/user/agent-collab-mcp.git /tmp/agent-collab
-cd your-project
-/tmp/agent-collab/init.sh --strategy architect-builder --engines cursor-only
+init.sh --strategy tdd-red-green --engines both
 ```
+
+---
+
+## What Gets Installed
+
+```
+your-project/
+├── agent-collab-mcp/          # MCP server (Node.js/TypeScript + SQLite)
+├── .agent-collab/
+│   └── collab.db              # Task/review state database
+├── .cursor/
+│   ├── mcp.json               # MCP registration (AGENT_ROLE=cursor)
+│   ├── hooks/                  # Session hooks (auto-inject next action)
+│   └── rules/agent-collab.mdc # Agent behavior rules
+├── .claude/
+│   ├── settings.json           # MCP registration (AGENT_ROLE=claude-code)
+│   └── hooks/                  # Session hooks (review detection)
+├── scripts/
+│   ├── dashboard.sh            # Dashboard launcher
+│   └── orchestrate.sh          # Automated handoff orchestrator
+├── CLAUDE.md                   # Claude Code protocol instructions
+└── AGENTS.md                   # Strategy & role reference
+```
+
+> Files are only created for the selected engine mode. `cursor-only` skips `.claude/` files, etc.
+
+---
+
+## Agent-Friendly Install Instructions
+
+If you're an AI agent asked to install this MCP, here's the exact flow:
+
+1. **Clone** the skeleton repo to a temp location:
+   ```bash
+   git clone https://github.com/michaelto20/agent-collab-skeleton.git /tmp/agent-collab
+   ```
+
+2. **Run init.sh** from the target project root:
+   ```bash
+   cd /path/to/target-project
+   /tmp/agent-collab/init.sh --strategy architect-builder --engines both
+   ```
+
+3. **Verify** the MCP server is registered:
+   - Cursor: check `.cursor/mcp.json` has the `agent-collab` server entry
+   - Claude Code: check `.claude/settings.json` has the `agent-collab` server entry
+
+4. **Call `get_my_status`** from the agent-collab MCP to confirm it's working.
+
+No manual steps required. The script is idempotent — safe to re-run.
+
+---
 
 ## How It Works
 
@@ -96,6 +130,22 @@ The MCP server uses a SQLite database (`.agent-collab/collab.db`) to manage:
 - **Activity log** for full audit trail
 
 The server enforces the state machine — agents cannot skip steps or access tools outside their role.
+
+### Typical Workflow (architect-builder, both engines)
+
+1. **Claude Code** (Architect): sets HLD via `set_context`, creates tasks via `create_task`
+2. **Cursor** (Builder): calls `get_my_status`, sees tasks, claims with `claim_task`, implements, submits via `submit_for_review`
+3. **Claude Code** (Reviewer): reviews with `review_task` — approves or requests changes
+4. Repeat until all tasks are done
+
+### Automated Orchestration
+
+For hands-off operation:
+
+```bash
+scripts/orchestrate.sh --mode semi   # Claude reviews automatically
+scripts/orchestrate.sh --mode full   # Both agents run headless
+```
 
 ## License
 
