@@ -1,7 +1,47 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import fs from "fs";
+import path from "path";
 import { getDb, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig, isSingleEngine } from "../db.js";
 import { dispatchReview, formatResult } from "../dispatch.js";
 import type { TaskRow, CountRow, ActivityRow } from "../types.js";
+
+function checkConfigHealth(role: string, engineMode: string): string {
+  if (engineMode !== "both") return "";
+
+  const cwd = process.cwd();
+
+  if (role === "cursor") {
+    const claudeSettings = path.join(cwd, ".claude", "settings.json");
+    if (!fs.existsSync(claudeSettings)) {
+      return `\n⚠ MISSING CONFIG: .claude/settings.json not found. Claude Code will not have access to the agent-collab MCP.\nFix: call setup_project(strategy, "both") to re-scaffold it, or re-run init.sh.\n`;
+    }
+    try {
+      const content = fs.readFileSync(claudeSettings, "utf-8");
+      if (!content.includes("agent-collab")) {
+        return `\n⚠ MISSING CONFIG: .claude/settings.json exists but does not register the agent-collab MCP server. Claude Code will not have access to the tools.\nFix: call setup_project(strategy, "both") to rewrite it, or manually add the agent-collab entry.\n`;
+      }
+    } catch {
+      return `\n⚠ MISSING CONFIG: Could not read .claude/settings.json. Claude Code may not have access to the agent-collab MCP.\nFix: call setup_project(strategy, "both") to re-scaffold it.\n`;
+    }
+  }
+
+  if (role === "claude-code") {
+    const cursorMcp = path.join(cwd, ".cursor", "mcp.json");
+    if (!fs.existsSync(cursorMcp)) {
+      return `\n⚠ MISSING CONFIG: .cursor/mcp.json not found. Cursor will not have access to the agent-collab MCP.\nFix: call setup_project(strategy, "both") to re-scaffold it, or re-run init.sh.\n`;
+    }
+    try {
+      const content = fs.readFileSync(cursorMcp, "utf-8");
+      if (!content.includes("agent-collab")) {
+        return `\n⚠ MISSING CONFIG: .cursor/mcp.json exists but does not register the agent-collab MCP server. Cursor will not have access to the tools.\nFix: call setup_project(strategy, "both") to rewrite it, or manually add the agent-collab entry.\n`;
+      }
+    } catch {
+      return `\n⚠ MISSING CONFIG: Could not read .cursor/mcp.json. Cursor may not have access to the agent-collab MCP.\nFix: call setup_project(strategy, "both") to re-scaffold it.\n`;
+    }
+  }
+
+  return "";
+}
 
 function buildToolList(access: ReturnType<typeof getMyRoleConfig>["tools"], single: boolean): string {
   const tools: string[] = [];
@@ -25,14 +65,16 @@ export function registerStatusTools(server: McpServer): void {
     {},
     async () => {
       const db = getDb();
+      const role = getRole();
       const strategy = getActiveStrategy();
       const engineMode = getEngineMode();
       const roleConfig = getMyRoleConfig();
       const single = isSingleEngine();
       const access = roleConfig.tools;
 
+      const healthWarning = checkConfigHealth(role, engineMode);
       const toolLine = `Your tools: ${buildToolList(access, single)}\n`;
-      const header = `[Strategy: ${strategy.name}] [Engine: ${engineMode}] [Role: ${roleConfig.name}]\n${toolLine}`;
+      const header = `${healthWarning}[Strategy: ${strategy.name}] [Engine: ${engineMode}] [Role: ${roleConfig.name}]\n${toolLine}`;
 
       const inProgress = db.prepare(
         "SELECT id, title FROM tasks WHERE status = 'in-progress' ORDER BY priority DESC, id LIMIT 1"

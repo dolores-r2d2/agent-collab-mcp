@@ -1,4 +1,13 @@
 {
+  "permissions": {
+    "allow": [
+      "mcp__agent-collab__*",
+      "Read(*)",
+      "Grep(*)",
+      "Write(*)",
+      "Edit(*)"
+    ]
+  },
   "mcpServers": {
     "agent-collab": {
       "command": "node",

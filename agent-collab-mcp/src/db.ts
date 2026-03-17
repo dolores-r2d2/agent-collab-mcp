@@ -150,7 +150,9 @@ function migrate(db: Database.Database): void {
 export function autoSetup(): void {
   const database = getDb();
   const role = getRole();
-  const mode: EngineMode = role === "claude-code" ? "claude-code-only" : role === "cursor" ? "cursor-only" : "both";
+  // Always default to "both" so both .cursor/mcp.json and .claude/settings.json are written.
+  // Single-engine modes should only be set explicitly via setup_project or init.sh --engines.
+  const mode: EngineMode = "both";
   setEngineMode(database, mode);
   setActiveStrategy(database, getDefaultStrategyId());
   database.prepare(

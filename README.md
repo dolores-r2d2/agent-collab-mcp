@@ -24,6 +24,10 @@ That's it. The `init.sh` script handles everything:
 
 After setup, open Cursor or run `claude` — the agent will call `get_my_status` and start working.
 
+> **Both engines need the MCP registered.** `init.sh` and the auto-setup write `.cursor/mcp.json` (for Cursor) **and** `.claude/settings.json` (for Claude Code) automatically. Installing only in Cursor is not sufficient for `both` mode — Claude Code must also have the `agent-collab` server entry in its settings.
+>
+> If Claude Code reports the tools are missing, call `setup_project(strategy, "both")` from Cursor (or re-run `init.sh`) to regenerate the missing config file.
+
 ### Dashboard
 
 The dashboard auto-starts with the MCP server at **http://localhost:4800**. You can also launch it manually:
@@ -146,6 +150,32 @@ For hands-off operation:
 scripts/orchestrate.sh --mode semi   # Claude reviews automatically
 scripts/orchestrate.sh --mode full   # Both agents run headless
 ```
+
+## Troubleshooting
+
+### Claude Code doesn't see the agent-collab MCP tools
+
+Both engines require separate MCP registrations pointing to the same database. Symptoms: Claude Code only shows built-in tools; `get_my_status` is not available.
+
+**Cause:** The MCP was installed via Cursor but `.claude/settings.json` was never written (common when the project was set up before v2.0.2 or when `engine_mode` was incorrectly inferred as `cursor-only`).
+
+**Fix:**
+1. From Cursor, call `setup_project("architect-builder", "both")` — this re-scaffolds `.claude/settings.json` alongside the Cursor config.
+2. Or re-run `init.sh --engines both` from the project root.
+3. Restart Claude Code after the file is written.
+
+You can verify `.claude/settings.json` contains the registration:
+```bash
+cat .claude/settings.json | grep agent-collab
+```
+
+### `get_my_status` shows a `⚠ MISSING CONFIG` warning
+
+This warning appears when the engine mode is `both` but the counterpart engine's config file is absent or doesn't contain the `agent-collab` entry. Follow the fix above.
+
+### MCP auto-setup used the wrong engine mode
+
+Early versions inferred `engine_mode` from `AGENT_ROLE`, which caused Cursor-first installs to be set as `cursor-only`. Fixed in v2.0.2. To reset: call `setup_project(strategy, "both")` from Cursor.
 
 ## License
 
