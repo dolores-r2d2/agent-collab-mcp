@@ -17,12 +17,24 @@ const VALID_ROLES = ["cursor", "claude-code"];
 
 let db: Database.Database | null = null;
 
+let sessionProjectDir: string | null = null;
+
+/**
+ * Override the project directory for this session.
+ * Used by setup_project when running as a global MCP.
+ */
+export function setProjectDir(dir: string): void {
+  sessionProjectDir = dir;
+  // Also reset the cached DB so next getDb() uses the new dir
+  db = null;
+}
+
 /**
  * Resolve the project root directory.
- * Priority: PROJECT_DIR env var > cwd
+ * Priority: session override > PROJECT_DIR env var > cwd
  */
 export function getProjectDir(): string {
-  return process.env.PROJECT_DIR || process.cwd();
+  return sessionProjectDir || process.env.PROJECT_DIR || process.cwd();
 }
 
 /**

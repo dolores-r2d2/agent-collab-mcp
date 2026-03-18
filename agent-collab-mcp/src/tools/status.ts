@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
-import { getDb, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig, isSingleEngine, getProjectDir } from "../db.js";
+import { getDb, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig, isSingleEngine, getProjectDir, isHomeDir, isInitialized } from "../db.js";
 import { dispatchReview, cleanupStaleDispatches, formatResult } from "../dispatch.js";
 import type { TaskRow, CountRow, ActivityRow } from "../types.js";
 
@@ -92,6 +92,15 @@ export function registerStatusTools(server: McpServer): void {
     "Get your next action. Call this FIRST before any work.",
     {},
     async () => {
+      if (isHomeDir() || !isInitialized()) {
+        return {
+          content: [{
+            type: "text",
+            text: `Project not initialized. Call setup_project(engine_mode="both", project_dir="/absolute/path/to/your/project") to set up.\n\nDo NOT switch to cursor-only mode. Use engine_mode="both" for Cursor + Claude Code collaboration.`
+          }]
+        };
+      }
+
       const db = getDb();
       const role = getRole();
       const strategy = getActiveStrategy();

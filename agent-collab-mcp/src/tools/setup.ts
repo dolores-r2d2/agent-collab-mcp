@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import path from "path";
 import fs from "fs";
-import { getDb, setActiveStrategy, setEngineMode, getRole, getProjectDir } from "../db.js";
+import { getDb, setActiveStrategy, setEngineMode, getRole, getProjectDir, setProjectDir, isHomeDir } from "../db.js";
 import { getStrategyDef, getAllStrategies, getDefaultStrategyId, type EngineMode } from "../strategies.js";
 import { getCursorTemplates, getClaudeTemplates, type TemplateFile } from "../templates.js";
 
@@ -87,13 +87,24 @@ export function registerSetupTools(server: McpServer): void {
 
   server.tool(
     "setup_project",
-    "Reconfigure agent collaboration: change strategy or engine mode. Also re-creates any missing config files.",
+    "Set up or reconfigure agent collaboration. Use engine_mode='both' for Cursor+Claude Code collaboration. Pass project_dir if running as a global MCP.",
     {
+      engine_mode: z.enum(["both", "cursor-only", "claude-code-only"]).describe("REQUIRED. Engine mode: 'both' (recommended — Cursor builds, Claude Code reviews), 'cursor-only', or 'claude-code-only'."),
       strategy: z.string().optional().describe("Strategy ID (default: architect-builder). Call list_strategies to see options."),
-      engine_mode: z.enum(["both", "cursor-only", "claude-code-only"]).describe("REQUIRED. Engine mode: 'both' (Cursor builds, Claude Code reviews), 'cursor-only' (Cursor does everything), or 'claude-code-only'."),
       project_name: z.string().optional().describe("Project name (default: current directory name)"),
+      project_dir: z.string().optional().describe("Absolute path to the project directory. Required when running as a global MCP without a project-specific config."),
     },
-    async ({ strategy, engine_mode, project_name }) => {
+    async ({ engine_mode, strategy, project_name, project_dir }) => {
+      // If project_dir provided, override for this session
+      if (project_dir) {
+        if (!fs.existsSync(project_dir)) {
+          return { content: [{ type: "text", text: `Directory not found: ${project_dir}` }] };
+        }
+        setProjectDir(project_dir);
+      } else if (isHomeDir()) {
+        return { content: [{ type: "text", text: `Cannot set up in home directory. Pass project_dir="/path/to/your/project" to specify the project location.` }] };
+      }
+
       const strategyId = strategy || getDefaultStrategyId();
       const mode = engine_mode;
       const projName = project_name || path.basename(getProjectDir());
