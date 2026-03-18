@@ -15,27 +15,36 @@ import { registerEpicTools } from "./tools/epic.js";
 import { registerReservationTools } from "./tools/reservations.js";
 import { registerCommentTools } from "./tools/comments.js";
 import { registerMetricsTools } from "./tools/metrics.js";
-import { isInitialized, autoSetup, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig, getProjectDir } from "./db.js";
+import { isInitialized, isHomeDir, autoSetup, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig, getProjectDir } from "./db.js";
 
 if (process.argv.includes("--dashboard")) {
   await import("./dashboard.js");
 } else {
-  if (!isInitialized()) {
+  let instructions: string;
+
+  if (isHomeDir()) {
+    // Global MCP running from home dir — don't create DB, just start the server.
+    // Tools will return NOT_SETUP until a project is opened.
+    instructions = "agent-collab MCP is running globally. Open a project folder and call setup_project to initialize.";
+    process.stderr.write(`agent-collab MCP started (global mode — no project dir, tools will prompt for setup)\n`);
+  } else if (!isInitialized()) {
     autoSetup();
     const mode = getEngineMode();
     writeProjectFiles(mode);
     process.stderr.write(`agent-collab MCP auto-setup complete | engine: ${mode} | strategy: architect-builder\n`);
   }
 
-  const strategy = getActiveStrategy();
-  const engineMode = getEngineMode();
-  const roleConfig = getMyRoleConfig();
-  const instructions = `[Strategy: ${strategy.name}] [Engine: ${engineMode}] [Role: ${roleConfig.name}] ${roleConfig.instructions}`;
+  if (!isHomeDir() && isInitialized()) {
+    const strategy = getActiveStrategy();
+    const engineMode = getEngineMode();
+    const roleConfig = getMyRoleConfig();
+    instructions = `[Strategy: ${strategy.name}] [Engine: ${engineMode}] [Role: ${roleConfig.name}] ${roleConfig.instructions}`;
+  }
 
   const server = new McpServer({
     name: "agent-collab",
-    version: "2.0.1",
-  }, { instructions });
+    version: "2.1.2",
+  }, { instructions: instructions! });
 
   registerStatusTools(server);
   registerSetupTools(server);
@@ -52,11 +61,16 @@ if (process.argv.includes("--dashboard")) {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  const role = getRole();
-  process.stderr.write(`agent-collab MCP started | strategy: ${strategy.name} | engine: ${engineMode} | role: ${roleConfig.name} (${role})\n`);
+  if (!isHomeDir() && isInitialized()) {
+    const role = getRole();
+    const strategy = getActiveStrategy();
+    const engineMode = getEngineMode();
+    const roleConfig = getMyRoleConfig();
+    process.stderr.write(`agent-collab MCP started | strategy: ${strategy.name} | engine: ${engineMode} | role: ${roleConfig.name} (${role})\n`);
+  }
 
   const dashboardScript = path.resolve(path.dirname(new URL(import.meta.url).pathname), "dashboard.js");
-  if (fs.existsSync(dashboardScript)) {
+  if (!isHomeDir() && isInitialized() && fs.existsSync(dashboardScript)) {
     try {
       const projectDir = getProjectDir();
       const logDir = path.join(projectDir, "scripts", "logs");

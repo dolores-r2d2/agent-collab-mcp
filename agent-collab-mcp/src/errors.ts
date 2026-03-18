@@ -10,4 +10,4 @@ export function err(code: ErrorCode, message: string) {
   return { content: [{ type: "text" as const, text: `[${code}] ${message}` }] };
 }
 
-export const NOT_SETUP = err("NOT_SETUP", "Project not set up. Call setup_project first.");
+export const NOT_SETUP = err("NOT_SETUP", "Project not set up. Open a project folder and call setup_project(engine_mode=\"both\") to initialize.");

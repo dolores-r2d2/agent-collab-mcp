@@ -20,31 +20,33 @@ let db: Database.Database | null = null;
 /**
  * Resolve the project root directory.
  * Priority: PROJECT_DIR env var > cwd
- * Safety: refuses to use home directory to prevent ghost DBs.
  */
 export function getProjectDir(): string {
-  const dir = process.env.PROJECT_DIR || process.cwd();
+  return process.env.PROJECT_DIR || process.cwd();
+}
+
+/**
+ * Returns true if the resolved project dir is the user's home directory.
+ * Used to prevent creating ghost DBs in ~ when running as a global MCP.
+ */
+export function isHomeDir(): boolean {
+  const dir = getProjectDir();
   const home = process.env.HOME || process.env.USERPROFILE || "";
-  if (home && dir === home) {
-    throw new Error(
-      `Refusing to create .agent-collab/ in home directory (${home}). ` +
-      `Open a project folder first, or set PROJECT_DIR env var in your MCP config.`
-    );
-  }
-  return dir;
+  return home !== "" && dir === home;
 }
 
 export function isInitialized(): boolean {
-  try {
-    const dbPath = path.join(getProjectDir(), DB_DIR, DB_FILE);
-    return fs.existsSync(dbPath);
-  } catch {
-    return false;
-  }
+  if (isHomeDir()) return false;
+  const dbPath = path.join(getProjectDir(), DB_DIR, DB_FILE);
+  return fs.existsSync(dbPath);
 }
 
 export function getDb(): Database.Database {
   if (db) return db;
+
+  if (isHomeDir()) {
+    throw new Error("No project directory. Open a project folder first, or set PROJECT_DIR env var.");
+  }
 
   const projectDir = getProjectDir();
   const dbDir = path.join(projectDir, DB_DIR);
