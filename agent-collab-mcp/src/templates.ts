@@ -40,8 +40,8 @@ export function getClaudeTemplates(): TemplateFile[] {
 const CURSOR_MCP_JSON = `{
   "mcpServers": {
     "agent-collab": {
-      "command": "node",
-      "args": ["./agent-collab-mcp/build/index.js"],
+      "command": "npx",
+      "args": ["-y", "agent-collab-mcp@latest"],
       "env": {
         "AGENT_ROLE": "cursor"
       }
@@ -427,7 +427,7 @@ const CLAUDE_SETTINGS = `{
   "mcpServers": {
     "agent-collab": {
       "command": "npx",
-      "args": ["agent-collab-mcp"],
+      "args": ["-y", "agent-collab-mcp@latest"],
       "env": {
         "AGENT_ROLE": "claude-code"
       }

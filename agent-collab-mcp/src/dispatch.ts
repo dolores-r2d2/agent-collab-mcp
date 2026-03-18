@@ -158,8 +158,8 @@ function checkAndRepairConfig(configPath: string, target: "claude-code" | "curso
 
 function getAgentCollabServerEntry(target: "claude-code" | "cursor"): Record<string, unknown> {
   return {
-    command: "node",
-    args: ["./agent-collab-mcp/build/index.js"],
+    command: "npx",
+    args: ["-y", "agent-collab-mcp@latest"],
     env: { AGENT_ROLE: target === "claude-code" ? "claude-code" : "cursor" },
   };
 }
