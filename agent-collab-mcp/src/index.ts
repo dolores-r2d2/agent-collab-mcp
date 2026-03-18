@@ -15,7 +15,7 @@ import { registerEpicTools } from "./tools/epic.js";
 import { registerReservationTools } from "./tools/reservations.js";
 import { registerCommentTools } from "./tools/comments.js";
 import { registerMetricsTools } from "./tools/metrics.js";
-import { isInitialized, autoSetup, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig } from "./db.js";
+import { isInitialized, autoSetup, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig, getProjectDir } from "./db.js";
 
 if (process.argv.includes("--dashboard")) {
   await import("./dashboard.js");
@@ -58,15 +58,16 @@ if (process.argv.includes("--dashboard")) {
   const dashboardScript = path.resolve(path.dirname(new URL(import.meta.url).pathname), "dashboard.js");
   if (fs.existsSync(dashboardScript)) {
     try {
-      const logDir = path.join(process.cwd(), "scripts", "logs");
+      const projectDir = getProjectDir();
+      const logDir = path.join(projectDir, "scripts", "logs");
       fs.mkdirSync(logDir, { recursive: true });
       const logFile = path.join(logDir, "dashboard.log");
       const out = fs.openSync(logFile, "a");
       const child = spawn("node", [dashboardScript], {
         detached: true,
         stdio: ["ignore", out, out],
-        cwd: process.cwd(),
-        env: { ...process.env },
+        cwd: projectDir,
+        env: { ...process.env, PROJECT_DIR: projectDir },
       });
       child.on("error", () => {
         process.stderr.write(`Dashboard auto-start failed (non-fatal). Check scripts/logs/dashboard.log\n`);

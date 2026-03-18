@@ -7,7 +7,7 @@
 import { spawn, execSync, type ChildProcess } from "child_process";
 import path from "path";
 import fs from "fs";
-import { getEngineMode, getRole, getDb, isSingleEngine } from "./db.js";
+import { getEngineMode, getRole, getDb, isSingleEngine, getProjectDir } from "./db.js";
 import { logToFile } from "./logger.js";
 
 export interface DispatchResult {
@@ -33,7 +33,7 @@ function cliExists(cmd: string): boolean {
 }
 
 function ensureLogDir(): string {
-  const logDir = path.join(process.cwd(), "scripts", "logs");
+  const logDir = path.join(getProjectDir(), "scripts", "logs");
   fs.mkdirSync(logDir, { recursive: true });
   return logDir;
 }
@@ -108,7 +108,7 @@ export function cleanupStaleDispatches(): { cleaned: number } {
  * If the config file is missing entirely, attempts to auto-repair by writing it from templates.
  */
 export function validateMcpConfig(target: "claude-code" | "cursor"): McpConfigCheck {
-  const cwd = process.cwd();
+  const cwd = getProjectDir();
 
   if (target === "claude-code") {
     const configPath = path.join(cwd, ".claude", "settings.json");
@@ -355,12 +355,12 @@ export function dispatchAgent(
   const child = spawn(cmd, args, {
     detached: true,
     stdio: ["ignore", out, out],
-    cwd: process.cwd(),
+    cwd: getProjectDir(),
   });
 
   child.unref();
   const pid = child.pid ?? 0;
-  const relLogFile = path.relative(process.cwd(), logFile);
+  const relLogFile = path.relative(getProjectDir(), logFile);
 
   fs.writeSync(out, `--- Dispatched: ${cmd} ${args.join(" ")}\n--- PID: ${pid}\n--- Time: ${new Date().toISOString()}\n---\n`);
 

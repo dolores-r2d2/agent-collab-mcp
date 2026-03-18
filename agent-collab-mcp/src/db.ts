@@ -17,15 +17,37 @@ const VALID_ROLES = ["cursor", "claude-code"];
 
 let db: Database.Database | null = null;
 
+/**
+ * Resolve the project root directory.
+ * Priority: PROJECT_DIR env var > cwd
+ * Safety: refuses to use home directory to prevent ghost DBs.
+ */
+export function getProjectDir(): string {
+  const dir = process.env.PROJECT_DIR || process.cwd();
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  if (home && dir === home) {
+    throw new Error(
+      `Refusing to create .agent-collab/ in home directory (${home}). ` +
+      `Open a project folder first, or set PROJECT_DIR env var in your MCP config.`
+    );
+  }
+  return dir;
+}
+
 export function isInitialized(): boolean {
-  const dbPath = path.join(process.cwd(), DB_DIR, DB_FILE);
-  return fs.existsSync(dbPath);
+  try {
+    const dbPath = path.join(getProjectDir(), DB_DIR, DB_FILE);
+    return fs.existsSync(dbPath);
+  } catch {
+    return false;
+  }
 }
 
 export function getDb(): Database.Database {
   if (db) return db;
 
-  const dbDir = path.join(process.cwd(), DB_DIR);
+  const projectDir = getProjectDir();
+  const dbDir = path.join(projectDir, DB_DIR);
   fs.mkdirSync(dbDir, { recursive: true });
 
   const dbPath = path.join(dbDir, DB_FILE);

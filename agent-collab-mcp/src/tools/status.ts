@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
-import { getDb, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig, isSingleEngine } from "../db.js";
+import { getDb, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig, isSingleEngine, getProjectDir } from "../db.js";
 import { dispatchReview, cleanupStaleDispatches, formatResult } from "../dispatch.js";
 import type { TaskRow, CountRow, ActivityRow } from "../types.js";
 
@@ -31,7 +31,7 @@ function checkEngineHealth(engineMode: string): string {
 function checkConfigHealth(role: string, engineMode: string): string {
   if (engineMode !== "both") return "";
 
-  const cwd = process.cwd();
+  const cwd = getProjectDir();
 
   if (role === "cursor") {
     const claudeSettings = path.join(cwd, ".claude", "settings.json");

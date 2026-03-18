@@ -16,8 +16,12 @@ const DEFAULT_PORT = 4800;
 const DB_DIR = ".agent-collab";
 const DB_FILE = "collab.db";
 
+function getProjectDir(): string {
+  return process.env.PROJECT_DIR || process.cwd();
+}
+
 function findDb(): Database.Database {
-  const dbPath = path.join(process.cwd(), DB_DIR, DB_FILE);
+  const dbPath = path.join(getProjectDir(), DB_DIR, DB_FILE);
   if (!fs.existsSync(dbPath)) {
     console.error(`Database not found: ${dbPath}`);
     console.error("Run init.sh first or start the MCP server.");
@@ -125,7 +129,7 @@ function apiContextDocs(db: Database.Database) {
 
 function getProjectName(db: Database.Database): string {
   const row = db.prepare("SELECT value FROM config WHERE key = 'project_name'").get() as { value: string } | undefined;
-  return row?.value ?? path.basename(process.cwd());
+  return row?.value ?? path.basename(getProjectDir());
 }
 
 function parsePort(): number {

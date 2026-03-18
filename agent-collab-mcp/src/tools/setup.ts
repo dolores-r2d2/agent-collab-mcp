@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import path from "path";
 import fs from "fs";
-import { getDb, setActiveStrategy, setEngineMode, getRole } from "../db.js";
+import { getDb, setActiveStrategy, setEngineMode, getRole, getProjectDir } from "../db.js";
 import { getStrategyDef, getAllStrategies, getDefaultStrategyId, type EngineMode } from "../strategies.js";
 import { getCursorTemplates, getClaudeTemplates, type TemplateFile } from "../templates.js";
 
@@ -40,7 +40,7 @@ export function writeProjectFiles(mode: string): WriteResult {
   }
 
   for (const tmpl of templates) {
-    const dest = path.join(process.cwd(), tmpl.path);
+    const dest = path.join(getProjectDir(), tmpl.path);
     if (fs.existsSync(dest)) {
       if (isMcpConfig(tmpl.path)) {
         const content = fs.readFileSync(dest, "utf-8");
@@ -66,7 +66,7 @@ export function writeProjectFiles(mode: string): WriteResult {
     written.push(tmpl.path);
   }
 
-  const gitignore = path.join(process.cwd(), ".gitignore");
+  const gitignore = path.join(getProjectDir(), ".gitignore");
   const ignoreEntries = [".agent-collab/", "scripts/logs/"];
   if (fs.existsSync(gitignore)) {
     const content = fs.readFileSync(gitignore, "utf-8");
@@ -77,7 +77,7 @@ export function writeProjectFiles(mode: string): WriteResult {
     }
   }
 
-  fs.mkdirSync(path.join(process.cwd(), "scripts/logs"), { recursive: true });
+  fs.mkdirSync(path.join(getProjectDir(), "scripts/logs"), { recursive: true });
 
   return { written, skipped };
 }
@@ -96,7 +96,7 @@ export function registerSetupTools(server: McpServer): void {
     async ({ strategy, engine_mode, project_name }) => {
       const strategyId = strategy || getDefaultStrategyId();
       const mode = engine_mode;
-      const projName = project_name || path.basename(process.cwd());
+      const projName = project_name || path.basename(getProjectDir());
 
       const def = getStrategyDef(strategyId);
       if (!def) {
@@ -165,7 +165,7 @@ export function registerSetupTools(server: McpServer): void {
     "Get the command to launch the collaboration dashboard.",
     {},
     async () => {
-      const dashScript = path.join(process.cwd(), "scripts/dashboard.sh");
+      const dashScript = path.join(getProjectDir(), "scripts/dashboard.sh");
       const hasDashScript = fs.existsSync(dashScript);
 
       let text = "Dashboard — real-time web UI for task tracking\n\n";
