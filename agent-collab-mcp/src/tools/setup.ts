@@ -11,6 +11,25 @@ export interface WriteResult {
   skipped: string[];
 }
 
+const MCP_CONFIG_PATHS = new Set([".cursor/mcp.json", ".claude/settings.json"]);
+
+function isMcpConfig(tmplPath: string): boolean {
+  return MCP_CONFIG_PATHS.has(tmplPath);
+}
+
+function mergeAgentCollabInto(existingPath: string, templateContent: string): boolean {
+  try {
+    const existing = JSON.parse(fs.readFileSync(existingPath, "utf-8"));
+    const template = JSON.parse(templateContent);
+    if (!existing.mcpServers) existing.mcpServers = {};
+    existing.mcpServers["agent-collab"] = template.mcpServers["agent-collab"];
+    fs.writeFileSync(existingPath, JSON.stringify(existing, null, 2) + "\n", "utf-8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function writeProjectFiles(mode: string): WriteResult {
   const written: string[] = [];
   const skipped: string[] = [];
@@ -23,7 +42,20 @@ export function writeProjectFiles(mode: string): WriteResult {
   for (const tmpl of templates) {
     const dest = path.join(process.cwd(), tmpl.path);
     if (fs.existsSync(dest)) {
-      skipped.push(tmpl.path);
+      if (isMcpConfig(tmpl.path)) {
+        const content = fs.readFileSync(dest, "utf-8");
+        if (!content.includes("agent-collab")) {
+          if (mergeAgentCollabInto(dest, tmpl.content)) {
+            written.push(`${tmpl.path} (merged agent-collab entry)`);
+          } else {
+            skipped.push(`${tmpl.path} (merge failed)`);
+          }
+        } else {
+          skipped.push(tmpl.path);
+        }
+      } else {
+        skipped.push(tmpl.path);
+      }
       continue;
     }
     fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -74,6 +106,23 @@ export function registerSetupTools(server: McpServer): void {
 
       const db = getDb();
 
+      // Warn if switching modes with open tasks owned by the engine being removed
+      const currentMode = db.prepare("SELECT value FROM config WHERE key = 'engine_mode'").get() as { value: string } | undefined;
+      let modeWarning = "";
+      if (currentMode?.value === "both" && mode !== "both") {
+        const removedEngine = mode === "cursor-only" ? "claude-code" : "cursor";
+        const orphanedTasks = db.prepare(
+          "SELECT id, title, status FROM tasks WHERE owner = ? AND status NOT IN ('done', 'cancelled')"
+        ).all(removedEngine) as { id: string; title: string; status: string }[];
+        if (orphanedTasks.length > 0) {
+          modeWarning = `\n⚠ WARNING: ${orphanedTasks.length} open task(s) owned by "${removedEngine}" will be orphaned:\n`;
+          for (const t of orphanedTasks) {
+            modeWarning += `  ${t.id}: "${t.title}" (${t.status})\n`;
+          }
+          modeWarning += `Consider reassigning these tasks or completing them before switching modes.\n`;
+        }
+      }
+
       setActiveStrategy(db, strategyId);
       setEngineMode(db, mode as EngineMode);
 
@@ -104,6 +153,7 @@ export function registerSetupTools(server: McpServer): void {
         text += `\nCursor = ${def.roles.primary.name} (Primary), Claude Code = ${def.roles.secondary.name} (Secondary)\n`;
       }
 
+      text += modeWarning;
       text += `\nCall get_my_status to see your next action.`;
 
       return { content: [{ type: "text", text }] };

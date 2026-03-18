@@ -94,6 +94,10 @@ export function registerDispatchTools(server: McpServer): void {
       text += formatResult(result);
       if (result.dispatched) {
         text += `\n\nThe Architect is working in the background. It will create an HLD and tasks, then auto-notify you when done. Call get_my_status periodically to check for new tasks.`;
+      } else if (result.reason && (result.reason.includes("settings.json") || result.reason.includes("mcp.json") || result.reason.includes("agent-collab"))) {
+        text += `\n\nThe Claude Code MCP config is missing or incomplete. Options:\n`;
+        text += `  1. Call setup_project(engine_mode="both") to repair the config and try again\n`;
+        text += `  2. Call setup_project(engine_mode="cursor-only") to handle both Architect and Builder roles yourself`;
       }
 
       return { content: [{ type: "text", text }] };

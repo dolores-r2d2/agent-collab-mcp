@@ -1,9 +1,32 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { getDb, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig, isSingleEngine } from "../db.js";
-import { dispatchReview, formatResult } from "../dispatch.js";
+import { dispatchReview, cleanupStaleDispatches, formatResult } from "../dispatch.js";
 import type { TaskRow, CountRow, ActivityRow } from "../types.js";
+
+function cliExists(cmd: string): boolean {
+  try {
+    execSync(`which ${cmd}`, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function checkEngineHealth(engineMode: string): string {
+  if (engineMode !== "both") return "";
+
+  const warnings: string[] = [];
+  if (!cliExists("claude")) {
+    warnings.push("⚠ Claude Code CLI ('claude') not found on PATH. Dispatch to Claude Code will fail. Consider switching to cursor-only mode.");
+  }
+  if (!cliExists("agent")) {
+    warnings.push("⚠ Cursor agent CLI ('agent') not found on PATH. Dispatch to Cursor will fail. Consider switching to claude-code-only mode.");
+  }
+  return warnings.length > 0 ? "\n" + warnings.join("\n") + "\n" : "";
+}
 
 function checkConfigHealth(role: string, engineMode: string): string {
   if (engineMode !== "both") return "";
@@ -54,7 +77,12 @@ function buildToolList(access: ReturnType<typeof getMyRoleConfig>["tools"], sing
   tools.push("get_task", "get_context", "get_review_feedback", "get_project_overview", "log_activity");
   if (!single) tools.push("trigger_review", "notify_builder", "invoke_architect", "run_loop");
   tools.push("archive_epic", "list_epics", "get_epic", "get_codebase_context");
-  tools.push("list_strategies", "get_active_strategy", "set_strategy", "set_engine_mode", "setup_project");
+  tools.push("list_strategies", "get_active_strategy");
+  // Only show mode-changing tools to the secondary role or in single-engine mode
+  // Prevents the Builder from going rogue and switching to cursor-only
+  if (single || access.context_write) {
+    tools.push("set_strategy", "set_engine_mode", "setup_project");
+  }
   return tools.join(", ");
 }
 
@@ -72,8 +100,17 @@ export function registerStatusTools(server: McpServer): void {
       const single = isSingleEngine();
       const access = roleConfig.tools;
 
+      // Cleanup stale dispatches on status check
+      const cleanup = cleanupStaleDispatches();
+
       const healthWarning = checkConfigHealth(role, engineMode);
+      const engineHealthWarning = checkEngineHealth(engineMode);
       const toolLine = `Your tools: ${buildToolList(access, single)}\n`;
+
+      let cleanupInfo = "";
+      if (cleanup.cleaned > 0) {
+        cleanupInfo = `\n(Cleaned up ${cleanup.cleaned} stale dispatch(es))\n`;
+      }
 
       let dispatchInfo = "";
       const activeDispatches = db.prepare(
@@ -86,7 +123,7 @@ export function registerStatusTools(server: McpServer): void {
         }
       }
 
-      const header = `${healthWarning}[Strategy: ${strategy.name}] [Engine: ${engineMode}] [Role: ${roleConfig.name}]\n${toolLine}${dispatchInfo}`;
+      const header = `${healthWarning}${engineHealthWarning}${cleanupInfo}[Strategy: ${strategy.name}] [Engine: ${engineMode}] [Role: ${roleConfig.name}]\n${toolLine}${dispatchInfo}`;
 
       const inProgress = db.prepare(
         "SELECT id, title FROM tasks WHERE status = 'in-progress' ORDER BY priority DESC, id LIMIT 1"
@@ -158,7 +195,7 @@ export function registerStatusTools(server: McpServer): void {
         if (single) {
           return text(header, `No tasks on the board.${historyHint} You have all tools — start by creating tasks with create_task(...).`);
         }
-        return text(header, `No tasks exist.${historyHint} Call invoke_architect("describe what the user wants built") to have Claude Code create the HLD and tasks. Pass the user's original request as the argument.`);
+        return text(header, `No tasks exist.${historyHint} You are the BUILDER — you do NOT create tasks or change engine modes. Call invoke_architect("describe what the user wants built") to have Claude Code design the architecture and create tasks for you. Pass the user's original request as the argument. Do NOT switch to cursor-only mode.`);
       }
 
       return text(header, "All tasks are done. Consider archiving this work with archive_epic(\"<name>\") to clear the board for the next feature. Or create new tasks if there are more requirements.");

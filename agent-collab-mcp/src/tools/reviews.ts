@@ -71,12 +71,26 @@ export function registerReviewTools(server: McpServer): void {
       ).get(task_id) as { round: number } | undefined;
       const round = (lastReview?.round || 0) + 1;
 
-      const newStatus = verdict === "approved" ? "done" : "changes-requested";
+      // Max review rounds guard — prevent infinite critic loops
+      const maxRoundsRow = db.prepare("SELECT value FROM config WHERE key = 'max_review_rounds'").get() as { value: string } | undefined;
+      const maxRounds = maxRoundsRow ? parseInt(maxRoundsRow.value, 10) : 5;
+      let autoApproved = false;
+
+      let effectiveVerdict = verdict;
+      if (verdict === "changes-requested" && round >= maxRounds) {
+        effectiveVerdict = "approved";
+        autoApproved = true;
+        db.prepare(
+          "INSERT INTO activity_log (agent, action) VALUES (?, ?)"
+        ).run(role, `Auto-approved ${task_id} after ${round} review rounds (max: ${maxRounds})`);
+      }
+
+      const newStatus = effectiveVerdict === "approved" ? "done" : "changes-requested";
 
       db.prepare(`
         INSERT INTO reviews (task_id, round, verdict, issues, notes)
         VALUES (?, ?, ?, ?, ?)
-      `).run(task_id, round, verdict, issues ? JSON.stringify(issues) : null, notes || null);
+      `).run(task_id, round, effectiveVerdict, issues ? JSON.stringify(issues) : null, notes || null);
 
       db.prepare(
         "UPDATE tasks SET status = ?, updated_at = datetime('now') WHERE id = ?"
@@ -89,18 +103,20 @@ export function registerReviewTools(server: McpServer): void {
 
       db.prepare(
         "INSERT INTO activity_log (agent, action) VALUES (?, ?)"
-      ).run(role, `Reviewed ${task_id} round ${round}: ${verdict}`);
+      ).run(role, `Reviewed ${task_id} round ${round}: ${effectiveVerdict}${autoApproved ? " (auto-approved, max rounds reached)" : ""}`);
 
-      if (verdict === "approved") {
+      if (effectiveVerdict === "approved") {
+        let approvedText = `${task_id} APPROVED (round ${round}).`;
+        if (autoApproved) {
+          approvedText += ` ⚠ AUTO-APPROVED: max review rounds (${maxRounds}) reached. Original verdict was changes-requested.`;
+        }
+        approvedText += ` Status set to done.${notes ? " Notes: " + notes : ""}`;
         return {
-          content: [{
-            type: "text",
-            text: `${task_id} APPROVED (round ${round}). Status set to done.${notes ? " Notes: " + notes : ""}`
-          }]
+          content: [{ type: "text", text: approvedText }]
         };
       }
 
-      let text = `${task_id} needs changes (round ${round}). Status set to changes-requested.\n`;
+      let text = `${task_id} needs changes (round ${round}/${maxRounds}). Status set to changes-requested.\n`;
       if (issues && issues.length > 0) {
         text += "\nIssues to fix:\n" + formatIssuesList(issues);
       }

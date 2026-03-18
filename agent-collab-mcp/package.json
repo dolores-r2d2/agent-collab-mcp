@@ -1,6 +1,6 @@
 {
   "name": "agent-collab-mcp",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "MCP server for multi-agent coordination between Cursor and Claude Code. Strategies, task management, review loops, and a live dashboard.",
   "type": "module",
   "main": "build/index.js",

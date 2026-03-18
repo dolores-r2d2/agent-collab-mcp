@@ -67,6 +67,8 @@ function migrate(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS context_docs (
       key TEXT PRIMARY KEY,
       content TEXT NOT NULL,
+      version INTEGER DEFAULT 1,
+      updated_by TEXT,
       updated_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -145,6 +147,15 @@ function migrate(db: Database.Database): void {
     );
   `);
 
+  // Migrate context_docs: add version and updated_by columns if missing
+  try {
+    db.exec("ALTER TABLE context_docs ADD COLUMN version INTEGER DEFAULT 1");
+  } catch { /* column already exists */ }
+  try {
+    db.exec("ALTER TABLE context_docs ADD COLUMN updated_by TEXT");
+  } catch { /* column already exists */ }
+
+  // Auto-prune activity log
   db.exec(`DELETE FROM activity_log WHERE id NOT IN (SELECT id FROM activity_log ORDER BY id DESC LIMIT 500)`);
 }
 
@@ -156,6 +167,10 @@ export function autoSetup(): void {
   const mode: EngineMode = "both";
   setEngineMode(database, mode);
   setActiveStrategy(database, getDefaultStrategyId());
+
+  // Auto-prune activity log on startup
+  database.exec(`DELETE FROM activity_log WHERE id NOT IN (SELECT id FROM activity_log ORDER BY id DESC LIMIT 500)`);
+
   database.prepare(
     "INSERT INTO activity_log (agent, action) VALUES (?, ?)"
   ).run(role, `Auto-setup: strategy=${getDefaultStrategyId()}, engine=${mode}`);

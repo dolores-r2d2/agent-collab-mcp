@@ -16,17 +16,26 @@ export function registerReservationTools(server: McpServer): void {
       const db = getDb();
       const role = getRole();
 
-      const conflicts = db.prepare(
-        `SELECT path, task_id FROM file_reservations WHERE path IN (${paths.map(() => "?").join(",")}) AND task_id != ?`
-      ).all(...paths, task_id) as { path: string; task_id: string }[];
+      // Use BEGIN IMMEDIATE to prevent race conditions between check and insert
+      const reserveTransaction = db.transaction(() => {
+        const conflicts = db.prepare(
+          `SELECT path, task_id FROM file_reservations WHERE path IN (${paths.map(() => "?").join(",")}) AND task_id != ?`
+        ).all(...paths, task_id) as { path: string; task_id: string }[];
 
-      if (conflicts.length > 0) {
-        const list = conflicts.map(c => `  ${c.path} (reserved by ${c.task_id})`).join("\n");
+        if (conflicts.length > 0) {
+          return { conflicts };
+        }
+
+        const stmt = db.prepare("INSERT OR REPLACE INTO file_reservations (path, task_id) VALUES (?, ?)");
+        for (const p of paths) stmt.run(p, task_id);
+        return { conflicts: [] };
+      });
+
+      const result = reserveTransaction.immediate();
+      if (result.conflicts.length > 0) {
+        const list = result.conflicts.map(c => `  ${c.path} (reserved by ${c.task_id})`).join("\n");
         return err("INVALID_STATE", `Cannot reserve — conflicts:\n${list}`);
       }
-
-      const stmt = db.prepare("INSERT OR REPLACE INTO file_reservations (path, task_id) VALUES (?, ?)");
-      for (const p of paths) stmt.run(p, task_id);
 
       db.prepare("INSERT INTO activity_log (agent, action) VALUES (?, ?)").run(role, `Reserved ${paths.length} file(s) for ${task_id}`);
       return { content: [{ type: "text", text: `Reserved ${paths.length} file(s) for ${task_id}.` }] };

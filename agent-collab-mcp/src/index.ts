@@ -68,10 +68,15 @@ if (process.argv.includes("--dashboard")) {
         cwd: process.cwd(),
         env: { ...process.env },
       });
+      child.on("error", () => {
+        process.stderr.write(`Dashboard auto-start failed (non-fatal). Check scripts/logs/dashboard.log\n`);
+      });
       child.unref();
-      process.stderr.write(`Dashboard auto-started | http://localhost:4800 | PID: ${child.pid}\n`);
-    } catch {
-      process.stderr.write(`Dashboard auto-start failed (non-fatal)\n`);
+      process.stderr.write(`Dashboard auto-started | http://localhost:4800 | log: scripts/logs/dashboard.log\n`);
+    } catch (e) {
+      process.stderr.write(`Dashboard auto-start failed: ${e instanceof Error ? e.message : e} (non-fatal)\n`);
     }
+  } else {
+    process.stderr.write(`Dashboard script not found at ${dashboardScript} — skipping auto-start\n`);
   }
 }

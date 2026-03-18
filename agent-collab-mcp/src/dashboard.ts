@@ -212,6 +212,15 @@ const server = http.createServer((req, res) => {
   res.end("Not found");
 });
 
+server.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EADDRINUSE") {
+    console.log(`Dashboard port ${port} already in use — another instance is likely running. Exiting gracefully.`);
+    process.exit(0);
+  }
+  console.error(`Dashboard error: ${err.message}`);
+  process.exit(1);
+});
+
 server.listen(port, () => {
   console.log(`\n  ⚡ Agent Collab Dashboard`);
   console.log(`  ➜ http://localhost:${port}\n`);
@@ -365,6 +374,22 @@ main{display:flex;flex-direction:column;gap:1.2rem;padding:1.5rem 2rem;max-width
   border:1px solid var(--bg-3);line-height:1.7;
 }
 
+/* ── Dispatches ────────────────────────────────────────── */
+.dispatch-list{display:flex;flex-direction:column;gap:0;max-height:300px;overflow-y:auto}
+.dispatch-item{
+  display:grid;grid-template-columns:auto 1fr auto;gap:.4rem .7rem;
+  padding:.55rem 0;border-bottom:1px solid var(--bg-3);align-items:center;
+}
+.dispatch-item:last-child{border-bottom:none}
+.dispatch-role{font-weight:600;font-size:.72rem;font-family:var(--font-mono);text-transform:capitalize}
+.dispatch-pid{font-size:.65rem;color:var(--fg-2);font-family:var(--font-mono)}
+.dispatch-badge{font-size:.6rem;padding:.15rem .45rem;border-radius:4px;font-weight:600;text-transform:uppercase}
+.dispatch-badge.running{background:var(--blue);color:#fff;animation:pulse 2s infinite}
+.dispatch-badge.completed{background:var(--green);color:#fff}
+.dispatch-badge.timeout{background:var(--orange);color:#fff}
+.dispatch-badge.failed{background:var(--red);color:#fff}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+
 /* ── Activity Feed ──────────────────────────────────────── */
 .activity-list{display:flex;flex-direction:column;gap:0;max-height:400px;overflow-y:auto}
 .activity-list::-webkit-scrollbar{width:4px}
@@ -513,6 +538,10 @@ main{display:flex;flex-direction:column;gap:1.2rem;padding:1.5rem 2rem;max-width
         <h3><span class="icon">&#128230;</span> Archived Epics</h3>
         <div id="epics-list"></div>
       </div>
+      <div class="panel" id="dispatches-panel">
+        <h3><span class="icon">&#128640;</span> Dispatches</h3>
+        <div class="dispatch-list" id="dispatches"></div>
+      </div>
       <div class="panel">
         <h3><span class="icon">&#9889;</span> Activity</h3>
         <div class="activity-list" id="activity"></div>
@@ -606,6 +635,23 @@ function renderStrategy(overview) {
       '<div class="role-box secondary"><div class="role-label">Secondary</div><div class="role-name">'+escHtml(s.secondary)+'</div></div>'+
     '</div>'+
     '<div class="engine-mapping">'+escHtml(mapping).replace(/\\n/g,'<br>')+'</div>';
+}
+
+function renderDispatches(items) {
+  const el = document.getElementById('dispatches');
+  const panel = document.getElementById('dispatches-panel');
+  if (!items || !items.length) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  el.innerHTML = items.map(d => {
+    const elapsed = d.completed_at
+      ? Math.round((new Date(d.completed_at+'Z') - new Date(d.created_at+'Z'))/1000) + 's'
+      : Math.round((Date.now() - new Date(d.created_at+'Z'))/1000) + 's ago';
+    return '<div class="dispatch-item">'+
+      '<div class="dispatch-role">'+escHtml(d.role)+'</div>'+
+      '<div class="dispatch-pid">PID '+d.pid+(d.log_file ? ' &middot; '+escHtml(d.log_file.split('/').pop()) : '')+'</div>'+
+      '<div><span class="dispatch-badge '+d.status+'">'+d.status+'</span> <span class="dispatch-pid">'+elapsed+'</span></div>'+
+    '</div>';
+  }).join('');
 }
 
 function renderActivity(items) {
@@ -776,18 +822,20 @@ async function openEpic(id) {
 
 async function refresh() {
   try {
-    const [overview, tasks, activity, epics, proj, ctxDocs] = await Promise.all([
+    const [overview, tasks, activity, epics, proj, ctxDocs, dispatches] = await Promise.all([
       fetchJSON('/api/overview'),
       fetchJSON('/api/tasks'),
       fetchJSON('/api/activity?limit=30'),
       fetchJSON('/api/epics'),
       fetchJSON('/api/project-name'),
       fetchJSON('/api/context'),
+      fetchJSON('/api/dispatches'),
     ]);
     renderStats(overview);
     renderKanban(tasks);
     renderStrategy(overview);
     renderContextDocs(ctxDocs);
+    renderDispatches(dispatches);
     renderActivity(activity);
     renderEpics(epics);
     if (proj && proj.name) document.getElementById('h-project').textContent = proj.name;

@@ -132,8 +132,8 @@ export function registerStrategyTools(server: McpServer): void {
     "set_engine_mode",
     "Change which engines are active: 'both', 'cursor-only', or 'claude-code-only'.",
     {
-      mode: z.enum(["both", "cursor-only", "claude-code-only"]).describe("Engine mode"),
-      confirm: z.boolean().describe("Set to true to confirm"),
+      mode: z.enum(["both", "cursor-only", "claude-code-only"]).describe("REQUIRED. The engine mode to switch to: 'both', 'cursor-only', or 'claude-code-only'"),
+      confirm: z.boolean().describe("REQUIRED. Set to true to confirm the change"),
     },
     async ({ mode, confirm }) => {
       if (!isInitialized()) return NOT_SETUP;

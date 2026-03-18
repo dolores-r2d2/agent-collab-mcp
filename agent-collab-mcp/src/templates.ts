@@ -11,6 +11,7 @@ export interface TemplateFile {
 
 export function getCursorTemplates(): TemplateFile[] {
   return [
+    { path: ".cursor/mcp.json", content: CURSOR_MCP_JSON },
     { path: ".cursor/hooks.json", content: CURSOR_HOOKS_JSON },
     { path: ".cursor/hooks/session-init.sh", content: CURSOR_SESSION_INIT, executable: true },
     { path: ".cursor/hooks/on-stop.sh", content: CURSOR_ON_STOP, executable: true },
@@ -35,6 +36,19 @@ export function getClaudeTemplates(): TemplateFile[] {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Cursor templates
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const CURSOR_MCP_JSON = `{
+  "mcpServers": {
+    "agent-collab": {
+      "command": "node",
+      "args": ["./agent-collab-mcp/build/index.js"],
+      "env": {
+        "AGENT_ROLE": "cursor"
+      }
+    }
+  }
+}
+`;
 
 const CURSOR_HOOKS_JSON = `{
   "version": 1,
