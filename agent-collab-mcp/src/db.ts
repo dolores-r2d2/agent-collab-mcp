@@ -117,7 +117,8 @@ function migrate(db: Database.Database): void {
       role TEXT NOT NULL,
       log_file TEXT,
       status TEXT DEFAULT 'running',
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TEXT DEFAULT (datetime('now')),
+      completed_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS file_reservations (

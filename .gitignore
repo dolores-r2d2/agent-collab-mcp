@@ -12,6 +12,7 @@ red-alerts-map.html
 scripts/.status
 .shared-memory/
 .claude/
+!template/.claude/
 .cursor/mcp.json
 .cursor/hooks.json
 .cursor/hooks/

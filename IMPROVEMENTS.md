@@ -1,175 +1,165 @@
-# Agent-Collab MCP: Improvement Suggestions
+# Agent-Collab MCP: Improvements — Post AI-DAW Field Report
 
-The agent-collab MCP is a ~3,500 LOC multi-agent coordination framework (Node.js/TypeScript + SQLite) that enables structured collaboration between Cursor and Claude Code via 6 research-backed strategies. The following improvements address gaps in reliability, observability, developer experience, and scalability, organized by impact/effort ratio.
+Findings from an AI-DAW session where the architect agent was dispatched via `claude -p --permission-mode auto` with a loose prompt. Instead of calling MCP tools, it wrote a Node.js script (`scripts/architect-setup.js`) that bypasses the MCP entirely, then stalled ~50 minutes waiting for shell approval that never came. The builder eventually switched to `cursor-only` and did everything itself — no cross-agent review cycle ever ran.
+
+**Root cause:** The MCP controls its own tool access per role, but has **zero control** over a spawned agent's built-in tools (Read, Write, Edit, Bash). `.claude/settings.json` grants `Write(*)` and `Edit(*)` to all Claude Code sessions, so the dispatched architect was free to ignore MCP tools and write scripts instead.
 
 ---
 
-## High Impact / Low Effort (Quick Wins)
+## Section 1: Critical — Architect Dispatch (the 50-minute failure)
 
-### 1. Validate AGENT_ROLE environment variable
+### 1. Create a dedicated `architect` agent definition
 
-- **Problem:** Typos like `AGENT_ROLE=cladue-code` silently default to `"unknown"`, causing confusing merged-role behavior
-- **Fix:** In `src/db.ts` `getRole()`, validate against `["cursor", "claude-code"]` and log a prominent warning to stderr if unrecognized
-- **File:** `agent-collab-mcp/src/db.ts`
-- **Effort:** ~15 min
+- **Problem:** `dispatchArchitect()` uses `claude -p` with an inline prompt. The agent has full tool access and no structural constraint forcing it to use MCP tools.
+- **Fix:** Create `template/.claude/agents/architect.md` (modeled on the existing `task-reviewer.md`). The agent definition should:
+  - Explicitly restrict: "You MUST only use MCP tools. Do NOT write files, scripts, or shell commands. Do NOT use Write, Edit, or Bash tools."
+  - Use `allowedTools` in frontmatter to whitelist only `mcp__agent-collab__*`, `Read`, `Glob`, `Grep`
+  - Change `dispatchArchitect()` in `agent-collab-mcp/src/dispatch.ts` to use `claude agent architect` instead of `claude -p`
+- **Why this works:** Agent definitions are Claude Code's mechanism for constraining tool access at the agent level — the one thing an MCP server cannot do.
+- **File:** New `template/.claude/agents/architect.md`, modify `agent-collab-mcp/src/dispatch.ts`
 
-### 2. Activity log retention policy
+### 2. Restrict permissions for dispatched processes
 
-- **Problem:** `activity_log` table grows unbounded, slowing dashboard queries over time
-- **Fix:** Add `pruneActivityLog()` in `migrate()` that keeps only the most recent 500 entries (configurable via `config` table key `activity_log_max_rows`)
-- **File:** `agent-collab-mcp/src/db.ts`
-- **Effort:** ~30 min
+- **Problem:** `.claude/settings.json` grants `Write(*)`, `Edit(*)` to ALL Claude Code sessions, including dispatched agents that should be MCP-only.
+- **Fix:** Use `allowedTools` in the agent definition frontmatter to scope permissions per role. The architect agent only needs: `mcp__agent-collab__*`, `Read(*)`, `Glob(*)`, `Grep(*)`. The reviewer agent (already defined) should similarly have `allowedTools` added.
+- **File:** `template/.claude/agents/architect.md`, `template/.claude/agents/task-reviewer.md`
 
-### 3. Enforce task dependency blocking
+### 3. Harden the dispatch prompt
 
-- **Problem:** `depends_on` is stored but never checked — agents can claim tasks whose dependencies aren't done
-- **Fix:** In `claim_task` handler, query dependency statuses and block if any aren't `done`. Show dependency status in `get_task` and dashboard
+- **Problem:** Current architect prompt in `dispatchArchitect()` (line 148 of `dispatch.ts`) is purely positive: "Call get_my_status... Create an HLD... break into tasks..." — it never tells the agent what NOT to do.
+- **Fix:** Add explicit negative constraints to the prompt: "Do NOT write files. Do NOT use Bash. Do NOT create scripts. Use ONLY MCP tools for all actions." Even with agent definitions, belt-and-suspenders prompting reduces drift.
+- **File:** `agent-collab-mcp/src/dispatch.ts` (lines 148, 117-118)
+
+### 4. Watchdog timeout on dispatch
+
+- **Problem:** `dispatchArchitect()` spawns a detached process and returns immediately. If the agent stalls (as happened for 50 minutes), nothing detects or kills it.
+- **Fix:** After spawning the architect, poll the DB every 30s for new tasks. If no tasks are created within a configurable timeout (default 5 min), kill the PID, log the failure, and return an error. Add `dispatch_timeout_seconds` config key.
+- **File:** `agent-collab-mcp/src/dispatch.ts`
+
+### 5. Use `--permission-mode bypassPermissions` for constrained dispatches
+
+- **Problem:** `--permission-mode auto` still blocks arbitrary shell commands — which is exactly what happened when the architect tried to run its self-written script.
+- **Fix:** If the agent is constrained to MCP-only via agent definition + `allowedTools`, `bypassPermissions` is safe and avoids the approval-gate deadlock. Alternative: keep `auto` but ensure the agent definition prevents shell commands.
+- **File:** `agent-collab-mcp/src/dispatch.ts` (line 155)
+
+---
+
+## Section 2: Cross-Agent Review Activation
+
+### 6. Auto-trigger review dispatch on `submit_for_review`
+
+- **Problem:** `submit_for_review` changes task status but doesn't dispatch a reviewer. Someone must manually call `trigger_review` or run `orchestrate.sh`. In the AI-DAW session, no review cycle ever ran.
+- **Fix:** Add `auto_dispatch_review` config flag (default `true` in `both` mode). When enabled, `submit_for_review` automatically calls `dispatchReview([taskId])` internally.
 - **File:** `agent-collab-mcp/src/tools/tasks.ts`
-- **Effort:** ~30 min
 
-### 4. Task priority field
+### 7. Use the `task-reviewer` agent definition for reviews
 
-- **Problem:** All tasks are equal; `get_my_status` picks by ID order, not importance
-- **Fix:** Add `priority INTEGER DEFAULT 0` column. Sort by `priority DESC` in status queries. Add optional `priority` param to `create_task`
-- **Files:** `src/db.ts`, `src/tools/tasks.ts`, `src/tools/status.ts`
-- **Effort:** ~45 min
-
-### 5. Deduplicate TypeScript interfaces
-
-- **Problem:** `TaskRow`, `ReviewRow` etc. defined in 4-5 files with slightly different shapes — maintenance hazard
-- **Fix:** Create `src/types.ts` with canonical interfaces, import everywhere
-- **Files:** New `src/types.ts`, all `src/tools/*.ts`
-- **Effort:** ~30 min
-
-### 6. Consistent structured error handling
-
-- **Problem:** Ad-hoc error strings make it hard for agents to distinguish error types programmatically
-- **Fix:** Create `error(code, message)` helper with codes like `NOT_FOUND`, `INVALID_STATE`, `DEPENDENCY_BLOCKED`. Replace ad-hoc returns across all tool files
-- **Files:** New `src/errors.ts`, all `src/tools/*.ts`
-- **Effort:** ~1-2 hours
-
-### 7. Centralize JSON issues parsing
-
-- **Problem:** Review `issues` JSON parsing duplicated in 5 places with identical try/catch fallback
-- **Fix:** Create `parseIssues(text)` utility, replace all 5 duplicate blocks
-- **Files:** New utility in `src/utils.ts`, `src/tools/tasks.ts`, `src/tools/reviews.ts`, `src/tools/epic.ts`
-- **Effort:** ~30 min
+- **Problem:** `template/.claude/agents/task-reviewer.md` exists with proper review instructions, but `dispatchAgent("reviewer", ...)` in `dispatch.ts` uses `claude -p` with an inline prompt (line 58), ignoring the agent definition entirely.
+- **Fix:** Change the reviewer dispatch path to use `claude agent task-reviewer` instead of `claude -p`. The agent definition already has the right instructions and constraints.
+- **File:** `agent-collab-mcp/src/dispatch.ts` (lines 57-58)
 
 ---
 
-## High Impact / High Effort (Strategic Investments)
+## Section 3: Observability
 
-### 8. Comprehensive test suite
+### 8. Dispatch health monitoring
 
-- **Problem:** Zero tests in a 3,500 LOC coordination system — any regression in the state machine or role mapping causes silent failures
+- **Problem:** Dispatched processes can crash, hang, or stall undetected. No tracking beyond an activity log entry.
+- **Fix:** Add a `dispatches` table (`id`, `pid`, `target`, `status`, `started_at`, `completed_at`). Track all dispatches. `get_my_status` shows active dispatches. Dashboard shows dispatch status with elapsed time. Detect stale processes (no DB activity + PID dead).
+- **Files:** `agent-collab-mcp/src/db.ts`, `agent-collab-mcp/src/dispatch.ts`, `agent-collab-mcp/src/dashboard.ts`
+
+### 9. Structured activity log to file
+
+- **Problem:** Activity is logged to SQLite only — not parseable by external tools, CI systems, or post-mortem scripts.
+- **Fix:** Emit structured log lines to `scripts/logs/activity.log` on every MCP state change. Format: `<timestamp>\t<action>\t<key=value pairs>`. Complements the DB log for offline analysis.
+- **File:** `agent-collab-mcp/src/db.ts` or new `agent-collab-mcp/src/logger.ts`
+
+---
+
+## Section 4: Beyond MCP — What an MCP Cannot Solve
+
+### 10. The MCP-only limitation (architectural note)
+
+An MCP server controls access to **its own tools**. It **cannot** restrict an agent's built-in tools (`Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`). For role-based constraints to work, you need a mechanism at the **agent level**, not the server level:
+
+- **Claude Code's mechanism:** Agent definitions (`.claude/agents/*.md`) with `allowedTools` in frontmatter — these are enforced by the CLI.
+- **Cursor's mechanism:** Rules files (`.cursor/rules/*.mdc`) with behavioral constraints — advisory, not enforced.
+
+**Recommendation:** For every MCP role that should be constrained (architect, reviewer), create a corresponding agent definition with explicit `allowedTools`. The MCP role determines *what MCP tools are available*; the agent definition determines *what non-MCP tools are available*.
+
+### 11. Consider a Claude Code skill for `invoke_architect`
+
+- Instead of spawning a subprocess, a skill (`.claude/skills/`) could run the architect workflow in-process.
+- **Pros:** No subprocess management, no permission issues, inherits current session's MCP connection.
+- **Cons:** Blocks the calling agent's session, can't run in parallel.
+- **Verdict:** Agent definitions are better for async dispatch; skills are better for synchronous single-agent workflows. Worth exploring for `claude-code-only` mode.
+
+---
+
+## Section 5: Retained from Original (still valid)
+
+### 12. Validate AGENT_ROLE environment variable
+
+- **Problem:** Typos like `AGENT_ROLE=cladue-code` silently default to `"unknown"`, causing confusing merged-role behavior.
+- **Fix:** In `src/db.ts` `getRole()`, validate against `["cursor", "claude-code"]` and log a prominent warning to stderr if unrecognized.
+- **File:** `agent-collab-mcp/src/db.ts`
+
+### 13. Activity log retention policy
+
+- **Problem:** `activity_log` table grows unbounded, slowing dashboard queries over time.
+- **Fix:** Add `pruneActivityLog()` in `migrate()` that keeps only the most recent 500 entries (configurable via `config` table key `activity_log_max_rows`).
+- **File:** `agent-collab-mcp/src/db.ts`
+
+### 14. Enforce task dependency blocking
+
+- **Problem:** `depends_on` is stored but never checked — agents can claim tasks whose dependencies aren't done. Confirmed as a real issue in AI-DAW report section 3.1.
+- **Fix:** In `claim_task` handler, query dependency statuses and block if any aren't `done`. Show dependency status in `get_task` and dashboard.
+- **File:** `agent-collab-mcp/src/tools/tasks.ts`
+
+### 15. Task priority field
+
+- **Problem:** All tasks are equal; `get_my_status` picks by ID order, not importance.
+- **Fix:** Add `priority INTEGER DEFAULT 0` column. Sort by `priority DESC` in status queries. Add optional `priority` param to `create_task`.
+- **Files:** `agent-collab-mcp/src/db.ts`, `agent-collab-mcp/src/tools/tasks.ts`, `agent-collab-mcp/src/tools/status.ts`
+
+### 16. Task cancellation/archival
+
+- **Problem:** No way to cancel or remove a task without archiving the entire epic.
+- **Fix:** Add `cancelled` status to state machine. Add `cancel_task(task_id, reason)` tool. Cancelled tasks hidden from active board but preserved for audit.
+- **Files:** `agent-collab-mcp/src/tools/tasks.ts`, `agent-collab-mcp/src/tools/status.ts`, `agent-collab-mcp/src/dashboard.ts`
+
+### 17. Comprehensive test suite
+
+- **Problem:** Zero tests in a ~3,500 LOC coordination system — now even more critical given the dispatch bugs exposed by the field report.
 - **Fix:** Add `vitest`, create tests for:
   - `db.test.ts` — role resolution, ID generation, auto-setup
   - `strategies.test.ts` — role config merging, tool access matrices
   - `tasks.test.ts` — state machine transitions, dependency enforcement
   - `reviews.test.ts` — round counting, verdict processing
-  - `dispatch.test.ts` — mock spawn, CLI existence checks
+  - `dispatch.test.ts` — mock spawn, watchdog timeout, CLI existence checks
   - Use in-memory SQLite (`:memory:`) for test isolation
-- **Files:** New `src/__tests__/` directory, `package.json` (add vitest)
-- **Effort:** ~8-12 hours
-
-### 9. File reservation system for parallel specialists
-
-- **Problem:** Parallel agents can modify the same files, causing conflicts. Research basis mentions file reservation but it's not implemented
-- **Fix:** Add `file_reservations` table (path, task_id). New `reserve_files` and `check_conflicts` MCP tools. Auto-release on task completion. Warn on `claim_task` if files overlap
-- **Files:** `src/db.ts`, new `src/tools/reservations.ts`, `src/tools/tasks.ts`
-- **Effort:** ~4-6 hours
-
-### 10. Real-time dashboard via SSE
-
-- **Problem:** 3-second polling = 6 HTTP requests/cycle, wasteful and laggy
-- **Fix:** Add `/api/events` SSE endpoint that pushes state changes. Replace `setInterval(refresh, 3000)` with `EventSource`. Keep REST endpoints for initial load
-- **File:** `agent-collab-mcp/src/dashboard.ts`
-- **Effort:** ~3-4 hours
-
-### 11. Interactive dashboard (read-write)
-
-- **Problem:** Dashboard is read-only; users must switch to terminal/agent to take actions
-- **Fix:** Add POST endpoints (`/api/task/claim`, `/api/task/trigger-review`, `/api/epic/archive`, `/api/strategy/set`). Open DB read-write for POSTs. Add action buttons with confirmation dialogs. Add basic CSRF protection
-- **File:** `agent-collab-mcp/src/dashboard.ts`
-- **Effort:** ~6-8 hours
-
-### 12. Metrics and analytics
-
-- **Problem:** No way to measure collaboration effectiveness or compare strategies
-- **Fix:** Add `task_transitions` table to log status changes with timestamps. Compute: avg task duration, review rounds, first-pass approval rate, time per status. New `get_metrics` tool + `/api/metrics` endpoint + dashboard panel
-- **Files:** `src/db.ts`, new `src/tools/metrics.ts`, `src/dashboard.ts`
-- **Effort:** ~6-8 hours
-
-### 13. Task commenting/discussion
-
-- **Problem:** No way for agents to communicate about a task beyond formal review verdicts
-- **Fix:** Add `task_comments` table. New `add_comment(task_id, message)` and `get_comments(task_id)` tools. Show in `get_task` output and dashboard modal
-- **Files:** `src/db.ts`, new `src/tools/comments.ts`, `src/dashboard.ts`
-- **Effort:** ~3-4 hours
+- **Files:** New `agent-collab-mcp/src/__tests__/` directory, `package.json` (add vitest)
 
 ---
 
-## Medium Impact (Nice-to-Haves)
+## Dropped from Original
 
-### 14. Dispatch retry and health monitoring
+Lower priority given the field findings — these are code quality or feature work items that should be deferred:
 
-- **Problem:** Failed dispatches have no retry; spawned processes can crash or hang undetected
-- **Fix:** Add `dispatches` table tracking PIDs and status. Retry with backoff (2 attempts, 5s/15s). Add `check_dispatch_health` that detects stale processes. Show dispatch status in dashboard
-- **Files:** `src/db.ts`, `src/dispatch.ts`, `src/tools/dispatch.ts`, `src/dashboard.ts`
-- **Effort:** ~3-4 hours
-
-### 15. Epic restoration (undo archive)
-
-- **Problem:** Epic archival is one-way; premature archival requires manual re-creation
-- **Fix:** Add `restore_epic(epic_id)` tool that re-hydrates tasks from `epic_tasks` back to `tasks`, restores context docs, handles ID conflicts. Add "Restore" button in dashboard
-- **Files:** `src/tools/epic.ts`, `src/dashboard.ts`
-- **Effort:** ~2-3 hours
-
-### 16. Hot-reload strategy switching
-
-- **Problem:** `set_strategy` requires MCP restart because role config is computed once at startup
-- **Fix:** Remove static `instructions` from McpServer constructor. Compute role config dynamically in each tool handler (most already do via `getToolAccess()`). Add strategy-change detection in `get_my_status`
-- **File:** `agent-collab-mcp/src/index.ts`
-- **Effort:** ~1-2 hours
-
-### 17. Git branch integration
-
-- **Problem:** No version control integration; multi-agent edits on same branch cause conflicts
-- **Fix:** Add `task_branch` column. On `claim_task`, optionally create `task/<task-id>` branch (behind `git_integration` config flag). On review approval, suggest merge. Show git status in dashboard
-- **Files:** `src/db.ts`, `src/tools/tasks.ts`, `src/tools/reviews.ts`
-- **Effort:** ~4-6 hours
-
-### 18. Notification webhooks
-
-- **Problem:** No notification system beyond CLI dispatch
-- **Fix:** Add `webhooks` config (JSON array of `{url, events}`). Fire async POST on state transitions. Add `configure_webhooks` tool
-- **Files:** `src/tools/tasks.ts`, `src/tools/reviews.ts`, new `src/webhooks.ts`
-- **Effort:** ~2-3 hours
-
-### 19. Dashboard authentication
-
-- **Problem:** Dashboard on port 4800 is completely open; risky in remote/codespace environments
-- **Fix:** Support `DASHBOARD_AUTH_TOKEN` env var. Check Bearer token on API requests. Add login form for HTML UI. Skip auth if no token configured (backward compatible)
-- **File:** `agent-collab-mcp/src/dashboard.ts`
-- **Effort:** ~1-2 hours
-
-### 20. Task cancellation/archival
-
-- **Problem:** No way to cancel or remove a task without archiving the entire epic
-- **Fix:** Add `cancelled` status to state machine. Add `cancel_task(task_id, reason)` tool. Cancelled tasks hidden from active board but preserved for audit
-- **Files:** `src/tools/tasks.ts`, `src/tools/status.ts`, `src/dashboard.ts`
-- **Effort:** ~1 hour
+- Deduplicate interfaces (#5), structured errors (#6), centralize JSON parsing (#7) — code quality, less urgent than dispatch fixes
+- File reservations (#9), SSE (#10), interactive dashboard (#11), metrics (#12), comments (#13) — feature work
+- Epic restore (#15), hot-reload (#16), git branches (#17), webhooks (#18), dashboard auth (#19) — nice-to-haves
 
 ---
 
-## Implementation Priority (Recommended Order)
+## Implementation Priority
 
-**Phase 1 — Foundation (items 1, 2, 3, 5, 6, 7):** Fix silent bugs, enforce existing data, clean up code. All low-effort, immediately valuable.
+**Phase 1 — Unblock dispatch (items 1-5):** Create architect agent definition, harden prompt, add watchdog. This directly fixes the 50-minute failure mode. **DONE**
 
-**Phase 2 — Reliability (items 8, 4, 14, 20):** Add tests, priority ordering, dispatch monitoring, task cancellation. Makes the system trustworthy.
+**Phase 2 — Close the review loop (items 6-7):** Auto-dispatch reviews, use existing agent definitions. This ensures the cross-agent review cycle actually runs. **DONE**
 
-**Phase 3 — Collaboration (items 9, 13, 16):** File reservations, commenting, hot-reload. Unlocks better multi-agent workflows.
+**Phase 3 — Observability (items 8-9, 12-13):** Dispatch tracking, structured logs, role validation, log retention. Makes failures visible. **DONE**
 
-**Phase 4 — Observability (items 10, 12, 11):** Real-time dashboard, metrics, interactive actions. Makes the system observable and controllable.
+**Phase 4 — Safety net (items 14-17):** Dependency enforcement, priority, cancellation, test suite. Prevents repeat incidents and enables confident iteration. **DONE**
 
-**Phase 5 — Integration (items 15, 17, 18, 19):** Epic restore, git branches, webhooks, auth. Polish for production use.
+**Phase 5 — Architecture (items 10-11):** Document the MCP-vs-agent-definition boundary. Evaluate skills for single-engine mode. **DONE** (item 11 documented as future work — agent definitions preferred over skills for async dispatch)

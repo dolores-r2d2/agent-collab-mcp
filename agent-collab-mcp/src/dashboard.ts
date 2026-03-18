@@ -98,6 +98,12 @@ function apiStrategies() {
   }));
 }
 
+function apiDispatches(db: Database.Database) {
+  return db.prepare(
+    "SELECT id, pid, role, log_file, status, created_at, completed_at FROM dispatches ORDER BY id DESC LIMIT 20"
+  ).all();
+}
+
 function apiEpics(db: Database.Database) {
   return db.prepare(
     "SELECT id, name, description, summary, strategy, engine_mode, task_count, archived_at FROM epics ORDER BY CAST(SUBSTR(id, 3) AS INTEGER) DESC"
@@ -177,6 +183,9 @@ const server = http.createServer((req, res) => {
           break;
         case "/api/context":
           data = apiContextDocs(db);
+          break;
+        case "/api/dispatches":
+          data = apiDispatches(db);
           break;
         default:
           res.writeHead(404);

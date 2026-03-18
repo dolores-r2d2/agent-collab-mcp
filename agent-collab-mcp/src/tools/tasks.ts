@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { isInitialized, getDb, getRole, getToolAccess, getDefaultOwner, nextTaskId, isSingleEngine, recordTransition } from "../db.js";
-import { dispatchBuilder, formatResult } from "../dispatch.js";
+import { dispatchBuilder, dispatchReview, formatResult } from "../dispatch.js";
 import { NOT_SETUP, err } from "../errors.js";
 import { parseIssues, formatIssuesList } from "../utils.js";
 import type { TaskRow, ReviewRow } from "../types.js";
@@ -24,7 +24,15 @@ export function registerTaskTools(server: McpServer): void {
 
       let text = `Task: ${task.id} — ${task.title}\n`;
       text += `Status: ${task.status} | Owner: ${task.owner}\n`;
-      if (task.depends_on) text += `Depends on: ${task.depends_on}\n`;
+      if (task.depends_on) {
+        const deps = task.depends_on.split(",").map((d: string) => d.trim());
+        const depStatuses = db.prepare(
+          `SELECT id, status FROM tasks WHERE id IN (${deps.map(() => "?").join(",")})`
+        ).all(...deps) as { id: string; status: string }[];
+        const depList = depStatuses.map(d => `${d.id} (${d.status})`).join(", ");
+        const allDone = depStatuses.every(d => d.status === "done");
+        text += `Depends on: ${depList}${allDone ? " ✓ all done" : " ⚠ blocking"}\n`;
+      }
       text += `\nContext:\n${task.context || "(none)"}\n`;
       text += `\nAcceptance:\n${task.acceptance || "(none)"}\n`;
       if (task.plan) text += `\nPlan:\n${task.plan}\n`;
@@ -197,7 +205,15 @@ export function registerTaskTools(server: McpServer): void {
       let text = `${task_id} submitted for review.`;
 
       if (!isSingleEngine()) {
-        text += ` Submit more tasks or call trigger_review() when ready for batch review.`;
+        const autoReview = db.prepare("SELECT value FROM config WHERE key = 'auto_dispatch_review'").get() as { value: string } | undefined;
+        const shouldAutoDispatch = !autoReview || autoReview.value !== "false";
+
+        if (shouldAutoDispatch) {
+          const result = dispatchReview([task_id]);
+          text += ` Auto-dispatching reviewer: ${formatResult(result)}`;
+        } else {
+          text += ` Submit more tasks or call trigger_review() when ready for batch review.`;
+        }
       }
 
       text += ` Call get_my_status to see your next action.`;

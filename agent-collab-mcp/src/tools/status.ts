@@ -74,7 +74,19 @@ export function registerStatusTools(server: McpServer): void {
 
       const healthWarning = checkConfigHealth(role, engineMode);
       const toolLine = `Your tools: ${buildToolList(access, single)}\n`;
-      const header = `${healthWarning}[Strategy: ${strategy.name}] [Engine: ${engineMode}] [Role: ${roleConfig.name}]\n${toolLine}`;
+
+      let dispatchInfo = "";
+      const activeDispatches = db.prepare(
+        "SELECT id, pid, role, log_file, created_at FROM dispatches WHERE status = 'running' ORDER BY id DESC"
+      ).all() as { id: number; pid: number; role: string; log_file: string; created_at: string }[];
+      if (activeDispatches.length > 0) {
+        dispatchInfo = `\nActive dispatches (${activeDispatches.length}):\n`;
+        for (const d of activeDispatches) {
+          dispatchInfo += `  #${d.id} ${d.role} (PID ${d.pid}) — started ${d.created_at}\n`;
+        }
+      }
+
+      const header = `${healthWarning}[Strategy: ${strategy.name}] [Engine: ${engineMode}] [Role: ${roleConfig.name}]\n${toolLine}${dispatchInfo}`;
 
       const inProgress = db.prepare(
         "SELECT id, title FROM tasks WHERE status = 'in-progress' ORDER BY priority DESC, id LIMIT 1"

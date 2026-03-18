@@ -106,6 +106,33 @@ AGENT_STRATEGY=parallel-specialist
 AGENT_ENGINE_MODE=cursor-only
 ```
 
+## Constraint Model: MCP vs Agent Definitions
+
+Role-based constraints operate at two levels:
+
+| Layer | Mechanism | Controls | Enforced by |
+|-------|-----------|----------|-------------|
+| **MCP Server** | Role-based tool access in `strategies.ts` | Which MCP tools each role can call | MCP server (hard enforcement) |
+| **Agent Definition** | `allowedTools` in `.claude/agents/*.md` | Which built-in tools the agent can use (Read, Write, Edit, Bash, etc.) | Claude Code CLI (hard enforcement) |
+
+An MCP server **cannot** restrict an agent's built-in tools. For constrained roles (architect, reviewer), both layers must be configured:
+
+- **MCP role** determines available MCP tools (e.g. architect can `create_task` but not `claim_task`)
+- **Agent definition** determines available non-MCP tools (e.g. architect can `Read` and `Grep` but not `Write` or `Bash`)
+
+For Cursor, `.cursor/rules/*.mdc` provides behavioral constraints but they are advisory, not enforced.
+
+### Agent Definitions
+
+| Agent | File | Built-in Tools | Purpose |
+|-------|------|---------------|---------|
+| `architect` | `.claude/agents/architect.md` | Read, Glob, Grep | Designs HLD, creates tasks. No file writes. |
+| `task-reviewer` | `.claude/agents/task-reviewer.md` | Read, Glob, Grep | Reviews implementations. No file writes. |
+
+### Dispatch Permissions
+
+Dispatched agents use `--permission-mode bypassPermissions` because their `allowedTools` already constrain them. This avoids the deadlock where `--permission-mode auto` blocks on shell approval for a detached process that has no human to approve.
+
 ## Automation
 
 ### Semi-Automated (`scripts/orchestrate.sh --mode semi`)
