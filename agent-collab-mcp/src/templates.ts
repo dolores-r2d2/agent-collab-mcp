@@ -15,6 +15,7 @@ export function getCursorTemplates(): TemplateFile[] {
     { path: ".cursor/hooks.json", content: CURSOR_HOOKS_JSON },
     { path: ".cursor/hooks/session-init.sh", content: CURSOR_SESSION_INIT, executable: true },
     { path: ".cursor/hooks/on-stop.sh", content: CURSOR_ON_STOP, executable: true },
+    { path: ".cursor/hooks/enforce-task.sh", content: CURSOR_ENFORCE_TASK, executable: true },
     { path: ".cursor/rules/agent-collab.mdc", content: CURSOR_RULE },
     { path: "AGENTS.md", content: AGENTS_MD },
     { path: "scripts/dashboard.sh", content: DASHBOARD_SH, executable: true },
@@ -58,6 +59,11 @@ const CURSOR_HOOKS_JSON = `{
     "sessionStart": [
       {
         "command": ".cursor/hooks/session-init.sh"
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": ".cursor/hooks/enforce-task.sh"
       }
     ],
     "stop": [
@@ -141,6 +147,53 @@ FOLLOWUP
 fi
 `;
 
+const CURSOR_ENFORCE_TASK = `#!/usr/bin/env bash
+# afterFileEdit hook: fires after every file edit by the Cursor agent.
+# Enforces the MCP workflow — blocks rogue edits in "both" mode.
+set -euo pipefail
+
+# Consume stdin (Cursor passes file edit details)
+cat > /dev/null
+
+DB=".agent-collab/collab.db"
+
+# Skip if agent-collab not set up or sqlite3 missing
+if [[ ! -f "$DB" ]] || ! command -v sqlite3 &>/dev/null; then
+  exit 0
+fi
+
+# Only enforce in "both" mode
+engine_mode=$(sqlite3 "$DB" "SELECT value FROM config WHERE key = 'engine_mode'" 2>/dev/null || echo "")
+if [[ "$engine_mode" != "both" ]]; then
+  exit 0
+fi
+
+# Check if Claude Code (Architect) has been involved
+hld_exists=$(sqlite3 "$DB" "SELECT COUNT(*) FROM context WHERE key = 'hld'" 2>/dev/null || echo "0")
+total_tasks=$(sqlite3 "$DB" "SELECT COUNT(*) FROM tasks" 2>/dev/null || echo "0")
+
+# If no HLD and no tasks — Cursor never called invoke_architect
+if [[ "$hld_exists" -eq 0 && "$total_tasks" -eq 0 ]]; then
+  cat <<'EOF'
+{
+  "agent_message": "STOP. You are in 'both' mode — Claude Code is the Architect. You MUST call invoke_architect('describe what the user wants') BEFORE writing any code. Do NOT create tasks or architecture yourself. Do NOT continue editing files until the Architect has created the HLD and tasks."
+}
+EOF
+  exit 0
+fi
+
+# Tasks exist — check if one is claimed
+in_progress=$(sqlite3 "$DB" "SELECT COUNT(*) FROM tasks WHERE status = 'in-progress'" 2>/dev/null || echo "0")
+
+if [[ "$in_progress" -eq 0 ]]; then
+  cat <<'EOF'
+{
+  "agent_message": "STOP. You are editing files without claiming a task. Call claim_task(task_id) from the agent-collab MCP before making any more changes. Run get_my_status to see available tasks."
+}
+EOF
+fi
+`;
+
 const CURSOR_RULE = `---
 description: Agent collaboration protocol via MCP
 alwaysApply: true
@@ -151,7 +204,7 @@ alwaysApply: true
 You have the agent-collab MCP configured. Follow the MCP workflow strictly:
 
 1. Call \`get_my_status\` to check your role, available tools, and next action
-2. If setup is needed, ask the user for BOTH strategy AND engine mode, then call \`setup_project(strategy, engine_mode)\`
+2. If setup is needed, call \`setup_project(project_dir)\` — do NOT pass engine_mode
 3. If no tasks exist:
    - In cursor-only mode: create HLD with \`set_context("hld", ...)\` then tasks with \`create_task\`
    - In both mode: call \`invoke_architect("what the user wants built")\` to have Claude Code design and create tasks
@@ -159,9 +212,14 @@ You have the agent-collab MCP configured. Follow the MCP workflow strictly:
 5. After submitting for review in "both" mode, call \`trigger_review()\` to auto-invoke the reviewer
 6. Check \`get_my_status\` after reviews — if changes-requested, \`claim_task\` again, fix, resubmit
 7. When all tasks are done, suggest \`archive_epic\` to the user to clear the board
-8. NEVER write code without claiming a task first via \`claim_task\`
-9. NEVER skip the MCP workflow even if the user says "just build it"
-10. The \`get_my_status\` response lists your available tools — only call tools listed there
+
+## MANDATORY Rules
+
+- NEVER write code without claiming a task first via \`claim_task\`
+- NEVER skip the MCP workflow even if the user says "just build it"
+- NEVER pass engine_mode to setup_project or call set_engine_mode
+- The \`get_my_status\` response lists your available tools — only call tools listed there
+- **An enforcement hook runs after every file edit.** If you have not claimed a task, it will block you and tell you to stop. Follow the MCP workflow to avoid interruptions.
 `;
 
 const AGENTS_MD = `# Agent Instructions
