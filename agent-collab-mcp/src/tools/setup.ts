@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import path from "path";
 import fs from "fs";
+import { execSync } from "child_process";
 import { getDb, setActiveStrategy, setEngineMode, getRole, getProjectDir, setProjectDir, isHomeDir } from "../db.js";
 import { getStrategyDef, getAllStrategies, getDefaultStrategyId, type EngineMode } from "../strategies.js";
 import { getCursorTemplates, getClaudeTemplates, type TemplateFile } from "../templates.js";
@@ -78,6 +79,14 @@ export function writeProjectFiles(mode: string): WriteResult {
   }
 
   fs.mkdirSync(path.join(getProjectDir(), "scripts/logs"), { recursive: true });
+
+  // Configure git to use .githooks/ for the pre-commit enforcement hook
+  const gitDir = path.join(getProjectDir(), ".git");
+  if (fs.existsSync(gitDir) && fs.existsSync(path.join(getProjectDir(), ".githooks/pre-commit"))) {
+    try {
+      execSync("git config core.hooksPath .githooks", { cwd: getProjectDir(), stdio: "ignore" });
+    } catch { /* non-fatal */ }
+  }
 
   return { written, skipped };
 }

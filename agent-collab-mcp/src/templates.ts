@@ -19,6 +19,7 @@ export function getCursorTemplates(): TemplateFile[] {
     { path: "AGENTS.md", content: AGENTS_MD },
     { path: "scripts/dashboard.sh", content: DASHBOARD_SH, executable: true },
     { path: "scripts/orchestrate.sh", content: ORCHESTRATE_SH, executable: true },
+    { path: ".githooks/pre-commit", content: PRE_COMMIT_HOOK, executable: true },
   ];
 }
 
@@ -409,6 +410,51 @@ else
   done
 fi
 [[ $processed -eq 0 ]] && log_info "No actionable tasks." || log_ok "Processed $processed task(s)."
+`;
+
+const PRE_COMMIT_HOOK = `#!/usr/bin/env bash
+# Enforces the agent-collab workflow: no commits without a claimed task.
+# Installed by setup_project into .githooks/pre-commit.
+# Activate with: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+DB=".agent-collab/collab.db"
+
+# Skip if agent-collab is not set up
+if [[ ! -f "$DB" ]]; then
+  exit 0
+fi
+
+# Skip if sqlite3 is not available
+if ! command -v sqlite3 &>/dev/null; then
+  exit 0
+fi
+
+# Check engine mode — only enforce in "both" mode
+engine_mode=$(sqlite3 "$DB" "SELECT value FROM config WHERE key = 'engine_mode'" 2>/dev/null || echo "")
+if [[ "$engine_mode" != "both" ]]; then
+  exit 0
+fi
+
+# Check if any task is in-progress
+in_progress=$(sqlite3 "$DB" "SELECT COUNT(*) FROM tasks WHERE status = 'in-progress'" 2>/dev/null || echo "0")
+
+if [[ "$in_progress" -eq 0 ]]; then
+  echo ""
+  echo "\\033[0;31m❌ BLOCKED: No task is in-progress.\\033[0m"
+  echo ""
+  echo "The agent-collab workflow requires a claimed task before committing."
+  echo "  1. Call claim_task(task_id) to claim a task"
+  echo "  2. Implement the changes"
+  echo "  3. Then commit"
+  echo ""
+  echo "To bypass (emergency only): git commit --no-verify"
+  echo ""
+  exit 1
+fi
+
+exit 0
 `;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
