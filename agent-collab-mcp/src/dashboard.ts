@@ -3,31 +3,53 @@
  * Agent Collaboration Dashboard — real-time web UI for task coordination.
  * Reads from the SQLite database and serves a self-contained HTML dashboard.
  *
- * Usage: node build/dashboard.js [--port 4800]
+ * Usage: agent-collab-dashboard [--port 4800] [--project-dir <path>]
  */
+
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  console.log(`agent-collab-dashboard — real-time web UI for agent task coordination
+
+Usage:
+  agent-collab-dashboard [options]
+  npx agent-collab-dashboard [options]
+
+Options:
+  --port <number>         HTTP port (default: 4800)
+  --project-dir <path>    Project directory (default: PROJECT_DIR env or cwd)
+  -h, --help              Show this help message`);
+  process.exit(0);
+}
 
 import http from "node:http";
 import path from "node:path";
 import fs from "node:fs";
 import Database from "better-sqlite3";
 import { getAllStrategies } from "./strategies.js";
+import { dispatchArchitect, dispatchBuilder, dispatchReview, formatResult, cleanupStaleDispatches } from "./dispatch.js";
+import { setProjectDir, autoSetup, isInitialized } from "./db.js";
+import { writeProjectFiles } from "./tools/setup.js";
 
 const DEFAULT_PORT = 4800;
 const DB_DIR = ".agent-collab";
 const DB_FILE = "collab.db";
 
 function getProjectDir(): string {
+  const idx = process.argv.indexOf("--project-dir");
+  if (idx !== -1 && process.argv[idx + 1]) {
+    return path.resolve(process.argv[idx + 1]);
+  }
   return process.env.PROJECT_DIR || process.cwd();
 }
 
 function findDb(): Database.Database {
   const dbPath = path.join(getProjectDir(), DB_DIR, DB_FILE);
   if (!fs.existsSync(dbPath)) {
-    console.error(`Database not found: ${dbPath}`);
-    console.error("Run init.sh first or start the MCP server.");
-    process.exit(1);
+    console.log("  Database not found — auto-initializing project...");
+    autoSetup();
+    writeProjectFiles("both");
+    console.log("  ✓ Project initialized (engine: both, strategy: architect-builder)");
   }
-  const db = new Database(dbPath, { readonly: true });
+  const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
   return db;
 }
@@ -140,11 +162,176 @@ function parsePort(): number {
   return DEFAULT_PORT;
 }
 
+function readBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    req.on("error", reject);
+  });
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Orchestrator polling loop
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function startOrchestrationLoop(db: Database.Database): void {
+  setInterval(() => {
+    try {
+      cleanupStaleDispatches();
+
+      const engineMode = getConfig(db, "engine_mode", "both");
+      if (engineMode !== "both") return;
+
+      const runningDispatches = db.prepare(
+        "SELECT role, status FROM dispatches WHERE status = 'running'"
+      ).all() as { role: string; status: string }[];
+      const runningRoles = new Set(runningDispatches.map(d => d.role));
+
+      const totalTasks = (db.prepare(
+        "SELECT COUNT(*) as cnt FROM tasks WHERE status != 'cancelled'"
+      ).get() as { cnt: number }).cnt;
+
+      const prdExists = db.prepare(
+        "SELECT COUNT(*) as cnt FROM context_docs WHERE key = 'prd'"
+      ).get() as { cnt: number };
+
+      // No tasks + no running architect + PRD exists → dispatch architect
+      if (totalTasks === 0 && !runningRoles.has("reviewer") && prdExists.cnt > 0) {
+        const prdContent = db.prepare(
+          "SELECT content FROM context_docs WHERE key = 'prd'"
+        ).get() as { content: string } | undefined;
+        if (prdContent) {
+          const result = dispatchArchitect(prdContent.content);
+          if (result.dispatched) {
+            console.log(`  [orchestrator] Auto-dispatched architect: PID ${result.pid}`);
+          }
+        }
+      }
+
+      // Tasks in "review" + no running reviewer → dispatch reviewer
+      const reviewTasks = db.prepare(
+        "SELECT id FROM tasks WHERE status = 'review' ORDER BY id"
+      ).all() as { id: string }[];
+      if (reviewTasks.length > 0 && !runningRoles.has("reviewer")) {
+        const result = dispatchReview(reviewTasks.map(t => t.id));
+        if (result.dispatched) {
+          console.log(`  [orchestrator] Auto-dispatched reviewer: PID ${result.pid}`);
+        }
+      }
+
+      // Tasks "assigned" or "changes-requested" + no running builder → dispatch builder
+      const builderTasks = db.prepare(
+        "SELECT id FROM tasks WHERE status IN ('assigned', 'changes-requested') ORDER BY priority DESC, id"
+      ).all() as { id: string }[];
+      if (builderTasks.length > 0 && !runningRoles.has("builder")) {
+        const result = dispatchBuilder(builderTasks.map(t => t.id));
+        if (result.dispatched) {
+          console.log(`  [orchestrator] Auto-dispatched builder: PID ${result.pid}`);
+        }
+      }
+    } catch (err) {
+      console.error("  [orchestrator] Poll error:", err);
+    }
+  }, 10_000);
+}
+
 const port = parsePort();
+const projectDir = getProjectDir();
+setProjectDir(projectDir);
+
+// Dashboard acts as the orchestrator on behalf of claude-code (secondary/architect role)
+if (!process.env.AGENT_ROLE) {
+  process.env.AGENT_ROLE = "claude-code";
+}
+if (!process.env.AGENT_ENGINE_MODE) {
+  process.env.AGENT_ENGINE_MODE = "both";
+}
+
 const db = findDb();
+
+if (getConfig(db, "engine_mode", "both") === "both" && !process.env.CURSOR_API_KEY) {
+  console.warn("⚠ CURSOR_API_KEY not set — dispatches to Cursor agent will fail. Export it or switch to claude-code-only mode.");
+}
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  // POST endpoints
+  if (req.method === "POST" && url.pathname.startsWith("/api/")) {
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+
+    readBody(req).then(body => {
+      try {
+        switch (url.pathname) {
+          case "/api/start-build": {
+            const parsed = JSON.parse(body);
+            const request = parsed.request;
+            if (!request || typeof request !== "string") {
+              res.writeHead(400);
+              res.end(JSON.stringify({ error: "missing 'request' string" }));
+              return;
+            }
+            // Store as PRD
+            db.prepare(
+              "INSERT OR REPLACE INTO context_docs (key, content, updated_at) VALUES ('prd', ?, datetime('now'))"
+            ).run(request);
+            // Dispatch architect
+            const result = dispatchArchitect(request);
+            res.writeHead(200);
+            res.end(JSON.stringify({ ok: true, dispatch: formatResult(result) }));
+            return;
+          }
+          case "/api/redispatch": {
+            const parsed = JSON.parse(body);
+            const target = parsed.target;
+            let result;
+            if (target === "architect") {
+              const prd = db.prepare("SELECT content FROM context_docs WHERE key = 'prd'").get() as { content: string } | undefined;
+              result = dispatchArchitect(prd?.content ?? "Review codebase, create HLD and tasks.");
+            } else if (target === "reviewer") {
+              const reviewTasks = db.prepare("SELECT id FROM tasks WHERE status = 'review' ORDER BY id").all() as { id: string }[];
+              result = dispatchReview(reviewTasks.map(t => t.id));
+            } else if (target === "builder") {
+              const builderTasks = db.prepare(
+                "SELECT id FROM tasks WHERE status IN ('assigned', 'changes-requested') ORDER BY priority DESC, id"
+              ).all() as { id: string }[];
+              result = dispatchBuilder(builderTasks.map(t => t.id));
+            } else {
+              res.writeHead(400);
+              res.end(JSON.stringify({ error: "target must be architect, reviewer, or builder" }));
+              return;
+            }
+            res.writeHead(200);
+            res.end(JSON.stringify({ ok: true, dispatch: formatResult(result) }));
+            return;
+          }
+          default:
+            res.writeHead(404);
+            res.end(JSON.stringify({ error: "not found" }));
+            return;
+        }
+      } catch (err) {
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+    }).catch(err => {
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: String(err) }));
+    });
+    return;
+  }
 
   if (url.pathname.startsWith("/api/")) {
     res.setHeader("Content-Type", "application/json");
@@ -228,6 +415,8 @@ server.on("error", (err: NodeJS.ErrnoException) => {
 server.listen(port, () => {
   console.log(`\n  ⚡ Agent Collab Dashboard`);
   console.log(`  ➜ http://localhost:${port}\n`);
+  startOrchestrationLoop(db);
+  console.log(`  🔄 Orchestration loop active (10s interval)\n`);
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -505,6 +694,30 @@ main{display:flex;flex-direction:column;gap:1.2rem;padding:1.5rem 2rem;max-width
 .epic-item:hover{border-color:var(--accent);transform:translateY(-1px);box-shadow:var(--shadow)}
 .epic-item .epic-name{font-size:.82rem;font-weight:600}
 .epic-item .epic-meta{font-size:.6rem;font-family:var(--font-mono);color:var(--fg-2);margin-top:.2rem}
+
+/* ── Orchestrator Controls ─────────────────────────────── */
+.orch-input{
+  display:flex;gap:.5rem;margin-bottom:.8rem;
+}
+.orch-input textarea{
+  flex:1;background:var(--bg-2);border:1px solid var(--bg-3);border-radius:var(--radius-sm);
+  color:var(--fg-0);font-family:var(--font-sans);font-size:.8rem;padding:.5rem .7rem;
+  resize:vertical;min-height:60px;
+}
+.orch-input textarea:focus{outline:none;border-color:var(--accent)}
+.orch-btn{
+  background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);
+  padding:.5rem 1rem;font-size:.75rem;font-weight:600;cursor:pointer;
+  font-family:var(--font-sans);transition:all .15s;white-space:nowrap;
+}
+.orch-btn:hover{filter:brightness(1.15)}
+.orch-btn:disabled{opacity:.5;cursor:not-allowed}
+.orch-btn.btn-sm{padding:.3rem .6rem;font-size:.65rem}
+.orch-btn.btn-green{background:var(--green)}
+.orch-btn.btn-orange{background:var(--orange)}
+.orch-btn.btn-blue{background:var(--blue)}
+.orch-status{font-size:.72rem;color:var(--fg-2);font-family:var(--font-mono);margin-top:.3rem}
+.dispatch-actions{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.6rem}
 </style>
 </head>
 <body>
@@ -530,6 +743,19 @@ main{display:flex;flex-direction:column;gap:1.2rem;padding:1.5rem 2rem;max-width
     </section>
 
     <aside class="sidebar">
+      <div class="panel" id="orchestrator-panel">
+        <h3><span class="icon">&#9889;</span> Orchestrator</h3>
+        <div class="orch-input">
+          <textarea id="build-request" placeholder="Describe what you want built..."></textarea>
+          <button class="orch-btn" id="start-build-btn" onclick="startBuild()">Start Build</button>
+        </div>
+        <div class="orch-status" id="orch-status"></div>
+        <div class="dispatch-actions">
+          <button class="orch-btn btn-sm btn-green" onclick="redispatch('architect')">Re-dispatch Architect</button>
+          <button class="orch-btn btn-sm btn-orange" onclick="redispatch('reviewer')">Re-dispatch Reviewer</button>
+          <button class="orch-btn btn-sm btn-blue" onclick="redispatch('builder')">Re-dispatch Builder</button>
+        </div>
+      </div>
       <div class="panel" id="strategy-panel">
         <h3><span class="icon">&#9881;</span> Strategy</h3>
         <div id="strategy-content"></div>
@@ -845,6 +1071,45 @@ async function refresh() {
     if (proj && proj.name) document.getElementById('h-project').textContent = proj.name;
   } catch(e) {
     console.error('Refresh failed:', e);
+  }
+}
+
+async function startBuild() {
+  const textarea = document.getElementById('build-request');
+  const request = textarea.value.trim();
+  if (!request) return;
+  const btn = document.getElementById('start-build-btn');
+  const status = document.getElementById('orch-status');
+  btn.disabled = true;
+  status.textContent = 'Dispatching architect...';
+  try {
+    const r = await fetch(API + '/api/start-build', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({request})
+    });
+    const data = await r.json();
+    status.textContent = data.ok ? data.dispatch : ('Error: ' + (data.error || 'unknown'));
+    if (data.ok) textarea.value = '';
+  } catch(e) {
+    status.textContent = 'Error: ' + e.message;
+  }
+  btn.disabled = false;
+}
+
+async function redispatch(target) {
+  const status = document.getElementById('orch-status');
+  status.textContent = 'Re-dispatching ' + target + '...';
+  try {
+    const r = await fetch(API + '/api/redispatch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({target})
+    });
+    const data = await r.json();
+    status.textContent = data.ok ? data.dispatch : ('Error: ' + (data.error || 'unknown'));
+  } catch(e) {
+    status.textContent = 'Error: ' + e.message;
   }
 }
 

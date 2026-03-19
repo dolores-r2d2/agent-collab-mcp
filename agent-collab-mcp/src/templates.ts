@@ -42,8 +42,7 @@ export function getClaudeTemplates(): TemplateFile[] {
 const CURSOR_MCP_JSON = `{
   "mcpServers": {
     "agent-collab": {
-      "command": "npx",
-      "args": ["-y", "agent-collab-mcp@latest"],
+      "command": "agent-collab-mcp",
       "env": {
         "AGENT_ROLE": "cursor",
         "AGENT_ENGINE_MODE": "both"
@@ -176,7 +175,7 @@ total_tasks=$(sqlite3 "$DB" "SELECT COUNT(*) FROM tasks" 2>/dev/null || echo "0"
 if [[ "$hld_exists" -eq 0 && "$total_tasks" -eq 0 ]]; then
   cat <<'EOF'
 {
-  "agent_message": "STOP. You are in 'both' mode — Claude Code is the Architect. You MUST call invoke_architect('describe what the user wants') BEFORE writing any code. Do NOT create tasks or architecture yourself. Do NOT continue editing files until the Architect has created the HLD and tasks."
+  "agent_message": "STOP. You are in 'both' mode — Claude Code is the Architect. The Architect is auto-dispatched when you call get_my_status. Call get_my_status and wait for tasks to appear. Do NOT create tasks or architecture yourself. Do NOT continue editing files until the Architect has created the HLD and tasks."
 }
 EOF
   exit 0
@@ -207,7 +206,7 @@ You have the agent-collab MCP configured. Follow the MCP workflow strictly:
 2. If setup is needed, call \`setup_project(project_dir)\` — do NOT pass engine_mode
 3. If no tasks exist:
    - In cursor-only mode: create HLD with \`set_context("hld", ...)\` then tasks with \`create_task\`
-   - In both mode: call \`invoke_architect("what the user wants built")\` to have Claude Code design and create tasks
+   - In both mode: the Architect is auto-dispatched when you call \`get_my_status\`. Wait for tasks to appear.
 4. For each assigned task: \`claim_task\` -> \`get_task\` -> implement -> \`submit_for_review\`
 5. After submitting for review in "both" mode, call \`trigger_review()\` to auto-invoke the reviewer
 6. Check \`get_my_status\` after reviews — if changes-requested, \`claim_task\` again, fix, resubmit
@@ -347,7 +346,7 @@ if [[ ! -f ".agent-collab/collab.db" ]]; then
   exit 1
 fi
 
-exec npx -y agent-collab-mcp -- --dashboard \${ARGS[@]+"\${ARGS[@]}"}
+exec npx -y agent-collab-dashboard \${ARGS[@]+"\${ARGS[@]}"}
 `;
 
 const ORCHESTRATE_SH = `#!/usr/bin/env bash
@@ -418,7 +417,7 @@ run_review() {
   local prompt="Call get_my_status from the agent-collab MCP. Then get_task(\\"$task_id\\") and review_task with your verdict."
   if [[ $DRY_RUN -eq 1 ]]; then log_info "[DRY RUN] Would review $task_id"; return 0; fi
   if [[ "$ENGINE_MODE" == "cursor-only" ]]; then
-    agent -p --force --workspace . "$prompt" > "$logfile" 2>&1 || true
+    cursor agent -p --force --trust "$prompt" > "$logfile" 2>&1 || true
   else
     claude -p --permission-mode auto "$prompt" > "$logfile" 2>&1 || true
   fi
@@ -433,7 +432,7 @@ run_implement() {
   if [[ "$ENGINE_MODE" == "claude-code-only" ]]; then
     claude -p --permission-mode auto "$prompt" > "$logfile" 2>&1 || true
   else
-    agent -p --force --workspace . "$prompt" > "$logfile" 2>&1 || true
+    cursor agent -p --force --trust "$prompt" > "$logfile" 2>&1 || true
   fi
 }
 
@@ -531,8 +530,7 @@ const CLAUDE_SETTINGS = `{
   },
   "mcpServers": {
     "agent-collab": {
-      "command": "npx",
-      "args": ["-y", "agent-collab-mcp@latest"],
+      "command": "agent-collab-mcp",
       "env": {
         "AGENT_ROLE": "claude-code",
         "AGENT_ENGINE_MODE": "both"
@@ -582,9 +580,9 @@ if [[ -z "$changes_task" ]]; then
   exit 0
 fi
 
-if [[ "\${AGENT_COLLAB_FULL_AUTO:-}" == "1" ]] && command -v agent &>/dev/null; then
+if [[ "\${AGENT_COLLAB_FULL_AUTO:-}" == "1" ]] && command -v cursor &>/dev/null; then
   mkdir -p scripts/logs
-  agent -p --force --workspace . \\
+  cursor agent -p --force --trust \\
     "Call get_my_status from agent-collab MCP. Claim task $changes_task, fix the issues, submit for review." \\
     > "scripts/logs/fix-\${changes_task}-$(date +%s).log" 2>&1 || true
 

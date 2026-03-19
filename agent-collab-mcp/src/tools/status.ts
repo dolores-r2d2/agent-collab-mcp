@@ -3,7 +3,7 @@ import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { getDb, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig, isSingleEngine, getProjectDir, isHomeDir, isInitialized } from "../db.js";
-import { dispatchReview, cleanupStaleDispatches, formatResult } from "../dispatch.js";
+import { dispatchReview, dispatchArchitect, cleanupStaleDispatches, formatResult } from "../dispatch.js";
 import type { TaskRow, CountRow, ActivityRow } from "../types.js";
 
 function cliExists(cmd: string): boolean {
@@ -22,8 +22,8 @@ function checkEngineHealth(engineMode: string): string {
   if (!cliExists("claude")) {
     warnings.push("⚠ Claude Code CLI ('claude') not found on PATH. Dispatch to Claude Code will fail. Consider switching to cursor-only mode.");
   }
-  if (!cliExists("agent")) {
-    warnings.push("⚠ Cursor agent CLI ('agent') not found on PATH. Dispatch to Cursor will fail. Consider switching to claude-code-only mode.");
+  if (!cliExists("cursor")) {
+    warnings.push("⚠ Cursor CLI ('cursor') not found on PATH. Dispatch to Cursor will fail. Consider switching to claude-code-only mode.");
   }
   return warnings.length > 0 ? "\n" + warnings.join("\n") + "\n" : "";
 }
@@ -204,7 +204,18 @@ export function registerStatusTools(server: McpServer): void {
         if (single) {
           return text(header, `No tasks on the board.${historyHint} You have all tools — start by creating tasks with create_task(...).`);
         }
-        return text(header, `No tasks exist.${historyHint} You are the BUILDER — you do NOT create tasks or change engine modes. Call invoke_architect("describe what the user wants built") to have Claude Code design the architecture and create tasks for you. Pass the user's original request as the argument. Do NOT switch to cursor-only mode.`);
+        // Auto-dispatch architect instead of relying on Builder to call invoke_architect
+        const running = db.prepare(
+          "SELECT COUNT(*) as cnt FROM dispatches WHERE role = 'reviewer' AND status = 'running'"
+        ).get() as { cnt: number };
+
+        if (running.cnt === 0) {
+          const result = dispatchArchitect(
+            "Read the codebase with Read/Glob/Grep. Check for a PRD via get_context. Create an HLD with set_context('hld', ...) and break the work into tasks with create_task. Set notify_builder=true on the last task."
+          );
+          return text(header, `No tasks yet.${historyHint} Architect auto-dispatched (${formatResult(result)}). Call get_my_status again in 30 seconds to check for new tasks. Do NOT write any code until tasks are assigned to you.`);
+        }
+        return text(header, `Architect is already working on the design.${historyHint} Call get_my_status again in 30 seconds. Do NOT write code until tasks appear.`);
       }
 
       return text(header, "All tasks are done. Consider archiving this work with archive_epic(\"<name>\") to clear the board for the next feature. Or create new tasks if there are more requirements.");

@@ -17,9 +17,7 @@ import { registerCommentTools } from "./tools/comments.js";
 import { registerMetricsTools } from "./tools/metrics.js";
 import { isInitialized, isHomeDir, autoSetup, getRole, getActiveStrategy, getEngineMode, getMyRoleConfig, getProjectDir } from "./db.js";
 
-if (process.argv.includes("--dashboard")) {
-  await import("./dashboard.js");
-} else {
+{
   let instructions: string;
 
   if (isHomeDir()) {

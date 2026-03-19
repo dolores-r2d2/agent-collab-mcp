@@ -209,7 +209,8 @@ function startWatchdog(
   child: ChildProcess,
   dispatchId: number,
   expectation: { countQuery: string; initialCount: number },
-  timeoutMs: number
+  timeoutMs: number,
+  logFile?: string
 ): void {
   const interval = 30_000;
   const start = Date.now();
@@ -222,6 +223,20 @@ function startWatchdog(
       completeDispatch(dispatchId, "completed");
       logToFile("dispatch_completed", { dispatch_id: dispatchId, elapsed_ms: elapsed });
       return true; // done
+    }
+
+    // After 30s, if log file has no meaningful output, likely auth failure
+    if (logFile && elapsed >= 30_000) {
+      try {
+        const logSize = fs.statSync(logFile).size;
+        // Header is ~120 bytes; if nothing beyond that, the agent produced no output
+        if (logSize <= 150) {
+          try { process.kill(child.pid!, "SIGTERM"); } catch { /* already dead */ }
+          completeDispatch(dispatchId, "failed");
+          logToFile("dispatch_no_output", { dispatch_id: dispatchId, elapsed_ms: elapsed, log_size: logSize, hint: "Likely auth failure — check CURSOR_API_KEY" });
+          return true;
+        }
+      } catch { /* stat failure, keep polling */ }
     }
 
     // Check for DB progress
@@ -310,6 +325,10 @@ export function dispatchAgent(
     return { dispatched: false, reason: configCheck.reason };
   }
 
+  if (dispatchTarget === "cursor" && !process.env.CURSOR_API_KEY) {
+    return { dispatched: false, reason: "CURSOR_API_KEY not set. Export it in your shell before starting the dashboard." };
+  }
+
   let cmd: string;
   let args: string[];
 
@@ -319,23 +338,23 @@ export function dispatchAgent(
         return { dispatched: false, reason: "claude CLI not found on PATH. Install it or run review manually." };
       }
       cmd = "claude";
-      args = ["agent", "task-reviewer", "--permission-mode", "bypassPermissions", "-p", prompt];
+      args = ["--agent", "task-reviewer", "--permission-mode", "bypassPermissions", "-p", prompt];
     } else if (mode === "both" && myRole === "claude-code") {
-      if (!cliExists("agent")) {
-        return { dispatched: false, reason: "agent CLI not found on PATH." };
+      if (!cliExists("cursor")) {
+        return { dispatched: false, reason: "Cursor CLI ('cursor') not found on PATH." };
       }
-      cmd = "agent";
-      args = ["-p", "--force", "--workspace", ".", prompt];
+      cmd = "cursor";
+      args = ["agent", "-p", "--force", "--trust", prompt];
     } else {
       return { dispatched: false, reason: `Cannot dispatch reviewer in mode=${mode}, role=${myRole}` };
     }
   } else {
     if (mode === "both" && myRole === "claude-code") {
-      if (!cliExists("agent")) {
-        return { dispatched: false, reason: "agent CLI not found on PATH." };
+      if (!cliExists("cursor")) {
+        return { dispatched: false, reason: "Cursor CLI ('cursor') not found on PATH." };
       }
-      cmd = "agent";
-      args = ["-p", "--force", "--workspace", ".", prompt];
+      cmd = "cursor";
+      args = ["agent", "-p", "--force", "--trust", prompt];
     } else if (mode === "both" && myRole === "cursor") {
       if (!cliExists("claude")) {
         return { dispatched: false, reason: "claude CLI not found on PATH." };
@@ -378,7 +397,7 @@ export function dispatchAgent(
   });
 
   if (watchdogQuery) {
-    startWatchdog(child, dispatchId, watchdogQuery, getDispatchTimeoutMs());
+    startWatchdog(child, dispatchId, watchdogQuery, getDispatchTimeoutMs(), logFile);
   }
 
   return {
