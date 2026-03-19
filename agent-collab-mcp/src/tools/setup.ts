@@ -87,7 +87,7 @@ export function registerSetupTools(server: McpServer): void {
 
   server.tool(
     "setup_project",
-    "Set up or reconfigure agent collaboration. Use engine_mode='both' for Cursor+Claude Code collaboration. Pass project_dir if running as a global MCP.",
+    "Set up agent collaboration for a project. Pass project_dir if running as a global MCP.",
     {
       engine_mode: z.enum(["both", "cursor-only", "claude-code-only"]).default("both").describe("Engine mode. Defaults to 'both' (Cursor builds, Claude Code reviews). Do NOT change this unless the user explicitly asks for single-engine mode."),
       strategy: z.string().optional().describe("Strategy ID (default: architect-builder). Call list_strategies to see options."),
@@ -106,7 +106,11 @@ export function registerSetupTools(server: McpServer): void {
       }
 
       const strategyId = strategy || getDefaultStrategyId();
-      const mode = engine_mode;
+      // AGENT_ENGINE_MODE env var wins — prevents models from overriding to cursor-only
+      const envMode = process.env.AGENT_ENGINE_MODE;
+      const mode = (envMode === "both" || envMode === "cursor-only" || envMode === "claude-code-only")
+        ? envMode
+        : engine_mode;
       const projName = project_name || path.basename(getProjectDir());
 
       const def = getStrategyDef(strategyId);

@@ -137,6 +137,9 @@ export function registerStrategyTools(server: McpServer): void {
     },
     async ({ mode, confirm }) => {
       if (!isInitialized()) return NOT_SETUP;
+      if (process.env.AGENT_ENGINE_MODE) {
+        return err("NO_ACCESS", `Engine mode is locked to "${process.env.AGENT_ENGINE_MODE}" via AGENT_ENGINE_MODE env var. Change it in your MCP config to override.`);
+      }
       const role = getRole();
       const canChange = role === "claude-code" || isSingleEngine() || role === "unknown";
       if (!canChange) {
