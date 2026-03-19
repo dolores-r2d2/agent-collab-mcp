@@ -96,7 +96,7 @@ export function registerStatusTools(server: McpServer): void {
         return {
           content: [{
             type: "text",
-            text: `Project not initialized. Call setup_project(engine_mode="both", project_dir="/absolute/path/to/your/project") to set up.\n\nDo NOT switch to cursor-only mode. Use engine_mode="both" for Cursor + Claude Code collaboration.`
+            text: `Project not initialized. Call setup_project(project_dir="/absolute/path/to/your/project") to set up. Engine mode defaults to "both" (Cursor + Claude Code collaboration). Do NOT pass engine_mode — the default is correct.`
           }]
         };
       }

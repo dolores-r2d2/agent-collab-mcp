@@ -160,7 +160,7 @@ function getAgentCollabServerEntry(target: "claude-code" | "cursor"): Record<str
   return {
     command: "npx",
     args: ["-y", "agent-collab-mcp@latest"],
-    env: { AGENT_ROLE: target === "claude-code" ? "claude-code" : "cursor" },
+    env: { AGENT_ROLE: target === "claude-code" ? "claude-code" : "cursor", AGENT_ENGINE_MODE: "both" },
   };
 }
 

@@ -43,7 +43,8 @@ const CURSOR_MCP_JSON = `{
       "command": "npx",
       "args": ["-y", "agent-collab-mcp@latest"],
       "env": {
-        "AGENT_ROLE": "cursor"
+        "AGENT_ROLE": "cursor",
+        "AGENT_ENGINE_MODE": "both"
       }
     }
   }
@@ -429,7 +430,8 @@ const CLAUDE_SETTINGS = `{
       "command": "npx",
       "args": ["-y", "agent-collab-mcp@latest"],
       "env": {
-        "AGENT_ROLE": "claude-code"
+        "AGENT_ROLE": "claude-code",
+        "AGENT_ENGINE_MODE": "both"
       }
     }
   }

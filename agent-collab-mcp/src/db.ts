@@ -221,6 +221,7 @@ export function getRole(): string {
 }
 
 export function getEngineMode(): EngineMode {
+  // Env var is the source of truth — set in MCP config, can't be overridden by agents
   const envMode = process.env.AGENT_ENGINE_MODE;
   if (envMode === "cursor-only" || envMode === "claude-code-only" || envMode === "both") {
     return envMode;

@@ -89,7 +89,7 @@ export function registerSetupTools(server: McpServer): void {
     "setup_project",
     "Set up or reconfigure agent collaboration. Use engine_mode='both' for Cursor+Claude Code collaboration. Pass project_dir if running as a global MCP.",
     {
-      engine_mode: z.enum(["both", "cursor-only", "claude-code-only"]).describe("REQUIRED. Engine mode: 'both' (recommended — Cursor builds, Claude Code reviews), 'cursor-only', or 'claude-code-only'."),
+      engine_mode: z.enum(["both", "cursor-only", "claude-code-only"]).default("both").describe("Engine mode. Defaults to 'both' (Cursor builds, Claude Code reviews). Do NOT change this unless the user explicitly asks for single-engine mode."),
       strategy: z.string().optional().describe("Strategy ID (default: architect-builder). Call list_strategies to see options."),
       project_name: z.string().optional().describe("Project name (default: current directory name)"),
       project_dir: z.string().optional().describe("Absolute path to the project directory. Required when running as a global MCP without a project-specific config."),
